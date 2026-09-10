@@ -8,7 +8,7 @@ This repository does not implement covert or below-awareness messaging.
 
 The first development milestone is implemented:
 
-- Native Windows controller with physical-camera enumeration and live local preview
+- OBS-inspired Qt 6 studio controller with resizable Scenes, Sources, Program, and Inspector panes
 - Physical-camera enumeration through Media Foundation
 - Live full-frame blur, solid/gradient presets, custom PNG/JPEG backgrounds, portrait-mask composition primitives, and mirroring
 - Disclosed prompt scheduling with enforced minimum duration and interval
@@ -23,6 +23,7 @@ The controller publishes its processed frames to a Windows Camera Frame Server m
 - Visual Studio 2022 or newer with **Desktop development with C++**
 - Windows SDK 10.0.22621 or newer
 - CMake 3.24 or newer
+- Qt 6.5 or newer with the MSVC 2022 x64 kit
 
 ## Build
 

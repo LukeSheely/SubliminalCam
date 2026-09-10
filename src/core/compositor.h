@@ -10,6 +10,7 @@ namespace subliminalcam {
 Frame solid_background(int width, int height, Pixel color);
 Frame gradient_background(int width, int height, Pixel top, Pixel bottom);
 Frame box_blur(const Frame& source, int radius);
+void box_blur_in_place(Frame& frame, int radius, Frame& horizontal_scratch);
 Frame composite_portrait(const Frame& foreground, const Frame& background,
                          std::span<const std::uint8_t> person_mask);
 void mirror_horizontal(Frame& frame);

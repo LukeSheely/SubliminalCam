@@ -1,5 +1,5 @@
 #define MyAppName "SubliminalCam"
-#define MyAppVersion "0.1.0"
+#define MyAppVersion "0.2.0"
 #define MyAppPublisher "SubliminalCam contributors"
 #define MyAppExeName "SubliminalCam.exe"
 
@@ -23,12 +23,7 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 LicenseFile=..\LICENSE
 
 [Files]
-Source: "..\out\SubliminalCam.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\out\SubliminalCamVcamCtl.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\out\VirtualCameraMediaSource.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\out\README.md"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\out\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\out\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\out\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\SubliminalCam"; Filename: "{app}\{#MyAppExeName}"

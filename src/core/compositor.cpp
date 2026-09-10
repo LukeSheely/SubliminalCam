@@ -28,44 +28,60 @@ Frame gradient_background(int width, int height, Pixel top, Pixel bottom) {
 
 Frame box_blur(const Frame& source, int radius) {
   if (radius <= 0) return source;
-  radius = std::min(radius, 48);
+  Frame output = source;
   Frame horizontal(source.width, source.height);
-  Frame output(source.width, source.height);
+  box_blur_in_place(output, radius, horizontal);
+  return output;
+}
 
-  for (int y = 0; y < source.height; ++y) {
+void box_blur_in_place(Frame& frame, int radius, Frame& horizontal) {
+  if (radius <= 0 || frame.width <= 0 || frame.height <= 0) return;
+  radius = std::min(radius, 48);
+  if (horizontal.width != frame.width || horizontal.height != frame.height) {
+    horizontal = Frame(frame.width, frame.height);
+  }
+
+  const int width = frame.width;
+  const int height = frame.height;
+  const auto* source = frame.pixels.data();
+  auto* scratch = horizontal.pixels.data();
+
+  for (int y = 0; y < height; ++y) {
     std::uint64_t sb = 0, sg = 0, sr = 0;
     for (int x = -radius; x <= radius; ++x) {
-      const auto& p = source.at(std::clamp(x, 0, source.width - 1), y);
+      const auto& p = source[static_cast<std::size_t>(y) * width + std::clamp(x, 0, width - 1)];
       sb += p.b; sg += p.g; sr += p.r;
     }
     const auto count = static_cast<unsigned>(radius * 2 + 1);
-    for (int x = 0; x < source.width; ++x) {
-      horizontal.at(x, y) = Pixel{static_cast<std::uint8_t>(sb / count),
-                                  static_cast<std::uint8_t>(sg / count),
-                                  static_cast<std::uint8_t>(sr / count), 255};
-      const auto& remove = source.at(std::clamp(x - radius, 0, source.width - 1), y);
-      const auto& add = source.at(std::clamp(x + radius + 1, 0, source.width - 1), y);
+    for (int x = 0; x < width; ++x) {
+      scratch[static_cast<std::size_t>(y) * width + x] =
+          Pixel{static_cast<std::uint8_t>(sb / count), static_cast<std::uint8_t>(sg / count),
+                static_cast<std::uint8_t>(sr / count), 255};
+      const auto& remove = source[static_cast<std::size_t>(y) * width +
+                                  std::clamp(x - radius, 0, width - 1)];
+      const auto& add = source[static_cast<std::size_t>(y) * width +
+                               std::clamp(x + radius + 1, 0, width - 1)];
       sb += add.b - remove.b; sg += add.g - remove.g; sr += add.r - remove.r;
     }
   }
 
-  for (int x = 0; x < source.width; ++x) {
+  auto* output = frame.pixels.data();
+  for (int x = 0; x < width; ++x) {
     std::uint64_t sb = 0, sg = 0, sr = 0;
     for (int y = -radius; y <= radius; ++y) {
-      const auto& p = horizontal.at(x, std::clamp(y, 0, source.height - 1));
+      const auto& p = scratch[static_cast<std::size_t>(std::clamp(y, 0, height - 1)) * width + x];
       sb += p.b; sg += p.g; sr += p.r;
     }
     const auto count = static_cast<unsigned>(radius * 2 + 1);
-    for (int y = 0; y < source.height; ++y) {
-      output.at(x, y) = Pixel{static_cast<std::uint8_t>(sb / count),
-                              static_cast<std::uint8_t>(sg / count),
-                              static_cast<std::uint8_t>(sr / count), 255};
-      const auto& remove = horizontal.at(x, std::clamp(y - radius, 0, source.height - 1));
-      const auto& add = horizontal.at(x, std::clamp(y + radius + 1, 0, source.height - 1));
+    for (int y = 0; y < height; ++y) {
+      output[static_cast<std::size_t>(y) * width + x] =
+          Pixel{static_cast<std::uint8_t>(sb / count), static_cast<std::uint8_t>(sg / count),
+                static_cast<std::uint8_t>(sr / count), 255};
+      const auto& remove = scratch[static_cast<std::size_t>(std::clamp(y - radius, 0, height - 1)) * width + x];
+      const auto& add = scratch[static_cast<std::size_t>(std::clamp(y + radius + 1, 0, height - 1)) * width + x];
       sb += add.b - remove.b; sg += add.g - remove.g; sr += add.r - remove.r;
     }
   }
-  return output;
 }
 
 Frame composite_portrait(const Frame& foreground, const Frame& background,
@@ -86,8 +102,9 @@ Frame composite_portrait(const Frame& foreground, const Frame& background,
 
 void mirror_horizontal(Frame& frame) {
   for (int y = 0; y < frame.height; ++y) {
+    auto* row = frame.pixels.data() + static_cast<std::size_t>(y) * frame.width;
     for (int x = 0; x < frame.width / 2; ++x) {
-      std::swap(frame.at(x, y), frame.at(frame.width - x - 1, y));
+      std::swap(row[x], row[frame.width - x - 1]);
     }
   }
 }

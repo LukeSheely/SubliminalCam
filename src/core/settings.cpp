@@ -37,6 +37,7 @@ bool save_settings(const AppSettings& raw, const std::filesystem::path& path) {
   std::wofstream out(path, std::ios::trunc);
   if (!out) return false;
   out << L"version=1\n"
+      << L"camera_id=" << settings.camera_id << L"\n"
       << L"background=" << static_cast<int>(settings.background_mode) << L"\n"
       << L"blur=" << settings.blur_radius << L"\n"
       << L"mirror=" << (settings.mirror ? 1 : 0) << L"\n"
@@ -60,7 +61,8 @@ AppSettings load_settings(const std::filesystem::path& path) {
     const auto key = line.substr(0, split);
     const auto value = line.substr(split + 1);
     try {
-      if (key == L"background") settings.background_mode = static_cast<BackgroundMode>(std::stoi(value));
+      if (key == L"camera_id") settings.camera_id = value;
+      else if (key == L"background") settings.background_mode = static_cast<BackgroundMode>(std::stoi(value));
       else if (key == L"blur") settings.blur_radius = std::stoi(value);
       else if (key == L"mirror") settings.mirror = value == L"1";
       else if (key == L"image_path") settings.image_path = value;

@@ -10,6 +10,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: microsoft/setup-msbuild@v2
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          arch: win64_msvc2022_64
+          cache: true
       - name: Restore virtual-camera dependencies
         run: msbuild vendor/windows-camera/VirtualCameraMediaSource/VirtualCameraMediaSource.vcxproj /t:Restore /p:RestorePackagesConfig=true /p:Configuration=Release /p:Platform=x64
       - name: Build virtual-camera media source

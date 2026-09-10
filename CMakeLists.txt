@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(SubliminalCam VERSION 0.1.0 LANGUAGES CXX)
+project(SubliminalCam VERSION 0.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -8,6 +8,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 if(NOT WIN32)
   message(FATAL_ERROR "SubliminalCam currently supports Windows 11 only")
 endif()
+
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets)
+qt_standard_project_setup()
 
 add_library(subliminalcam_core STATIC
   src/core/compositor.cpp
@@ -19,7 +22,7 @@ target_include_directories(subliminalcam_core PUBLIC src)
 target_compile_definitions(subliminalcam_core PRIVATE UNICODE _UNICODE NOMINMAX)
 target_link_libraries(subliminalcam_core PUBLIC advapi32)
 
-add_executable(SubliminalCam WIN32
+qt_add_executable(SubliminalCam WIN32
   src/app/main.cpp
   src/app/camera_devices.cpp
   src/app/camera_capture.cpp
@@ -27,9 +30,13 @@ add_executable(SubliminalCam WIN32
 )
 target_link_libraries(SubliminalCam PRIVATE
   subliminalcam_core
-  mfplat mf mfreadwrite mfuuid ole32 comctl32 comdlg32 windowscodecs shlwapi msimg32
+  Qt6::Core Qt6::Gui Qt6::Widgets
+  mfplat mf mfreadwrite mfuuid ole32 windowscodecs shlwapi
 )
 target_compile_definitions(SubliminalCam PRIVATE UNICODE _UNICODE NOMINMAX)
+if(MSVC)
+  target_compile_options(SubliminalCam PRIVATE /utf-8)
+endif()
 
 add_executable(SubliminalCamVcamCtl src/vcamctl/main.cpp)
 target_link_libraries(SubliminalCamVcamCtl PRIVATE
@@ -54,6 +61,12 @@ if(EXISTS "${VCAM_SOURCE_DLL}")
 endif()
 
 install(TARGETS SubliminalCam SubliminalCamVcamCtl RUNTIME DESTINATION .)
+qt_generate_deploy_app_script(
+  TARGET SubliminalCam
+  OUTPUT_SCRIPT subliminalcam_deploy_script
+  NO_TRANSLATIONS
+)
+install(SCRIPT ${subliminalcam_deploy_script})
 install(FILES
   "${VCAM_SOURCE_DLL}"
   DESTINATION . OPTIONAL

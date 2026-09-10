@@ -60,6 +60,17 @@ void test_compositor() {
   impulse.at(1, 0) = Pixel{255, 255, 255, 255};
   auto blurred = box_blur(impulse, 1);
   require(blurred.at(1, 0).r > 0 && blurred.at(1, 0).r < 255, "blur");
+
+  Frame in_place = impulse;
+  Frame scratch(impulse.width, impulse.height);
+  box_blur_in_place(in_place, 1, scratch);
+  require(in_place.pixels.size() == blurred.pixels.size(), "in-place blur dimensions");
+  for (std::size_t i = 0; i < blurred.pixels.size(); ++i) {
+    require(in_place.pixels[i].r == blurred.pixels[i].r &&
+            in_place.pixels[i].g == blurred.pixels[i].g &&
+            in_place.pixels[i].b == blurred.pixels[i].b,
+            "in-place blur equivalence");
+  }
 }
 
 int main() {
