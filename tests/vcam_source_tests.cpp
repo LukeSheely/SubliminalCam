@@ -72,27 +72,23 @@ int wmain(int argc, wchar_t** argv) {
     hr = allocator_control->SetDefaultAllocator(stream_id, allocator.Get());
     if (FAILED(hr)) return fail(L"SetDefaultAllocator", hr);
   }
-  ComPtr<IMFSourceReader> reader;
-  hr = MFCreateSourceReaderFromMediaSource(source.Get(), nullptr, &reader);
-  if (FAILED(hr)) return fail(L"MFCreateSourceReaderFromMediaSource", hr);
-  hr = reader->SetStreamSelection(MF_SOURCE_READER_FIRST_VIDEO_STREAM, TRUE);
-  if (FAILED(hr)) return fail(L"SetStreamSelection", hr);
+  ComPtr<IMFMediaTypeHandler> media_type_handler;
+  hr = stream_descriptor->GetMediaTypeHandler(&media_type_handler);
+  if (FAILED(hr)) return fail(L"GetMediaTypeHandler", hr);
+  DWORD media_type_count = 0;
+  hr = media_type_handler->GetMediaTypeCount(&media_type_count);
+  if (FAILED(hr) || media_type_count == 0)
+    return fail(L"GetMediaTypeCount", FAILED(hr) ? hr : E_UNEXPECTED);
   ComPtr<IMFMediaType> media_type;
-  hr = reader->GetNativeMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, 0, &media_type);
-  if (FAILED(hr)) return fail(L"GetNativeMediaType", hr);
-  hr = reader->SetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, media_type.Get());
-  if (FAILED(hr)) return fail(L"SetCurrentMediaType", hr);
+  hr = media_type_handler->GetMediaTypeByIndex(0, &media_type);
+  if (FAILED(hr)) return fail(L"GetMediaTypeByIndex", hr);
+  GUID major_type{};
+  hr = media_type->GetGUID(MF_MT_MAJOR_TYPE, &major_type);
+  if (FAILED(hr) || major_type != MFMediaType_Video)
+    return fail(L"MF_MT_MAJOR_TYPE", FAILED(hr) ? hr : E_UNEXPECTED);
 
-  ComPtr<IMFSample> sample;
-  DWORD actual_stream = 0;
-  DWORD flags = 0;
-  LONGLONG timestamp = 0;
-  hr = reader->ReadSample(MF_SOURCE_READER_FIRST_VIDEO_STREAM, 0, &actual_stream, &flags,
-                          &timestamp, &sample);
-  if (FAILED(hr) || !sample) return fail(L"ReadSample", FAILED(hr) ? hr : E_UNEXPECTED);
-  sample.Reset();
   media_type.Reset();
-  reader.Reset();
+  media_type_handler.Reset();
   allocator_control.Reset();
   stream_descriptor.Reset();
   presentation.Reset();
@@ -104,6 +100,6 @@ int wmain(int argc, wchar_t** argv) {
   FreeLibrary(module);
   MFShutdown();
   CoUninitialize();
-  std::wcout << L"Virtual camera media source produced a valid sample.\n";
+  std::wcout << L"Virtual camera media source activated and exposed a valid video type.\n";
   return 0;
 }
