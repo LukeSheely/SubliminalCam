@@ -1,6 +1,6 @@
 # SubliminalCam
 
-SubliminalCam is a Windows 11 camera-effects project for video calls. It is being built as a consent-based virtual camera: short prompts are consciously readable, and the outgoing frame always displays a **Prompts enabled** badge whenever the feature is active.
+SubliminalCam is a Windows 11 camera-effects project for video calls.
 
 This repository does not implement covert or below-awareness messaging.
 
@@ -11,7 +11,6 @@ The first development milestone is implemented:
 - OBS-inspired Qt 6 studio controller with resizable Scenes, Sources, Program, and Inspector panes
 - Physical-camera enumeration through Media Foundation
 - Live full-frame blur, solid/gradient presets, custom PNG/JPEG backgrounds, portrait-mask composition primitives, and mirroring
-- Disclosed prompt scheduling with enforced minimum duration and interval
 - Local settings persistence
 - Native unit tests and CI configuration
 
@@ -49,9 +48,6 @@ Remove it with `SubliminalCamVcamCtl.exe remove`.
 
 - Frames and messages are processed locally.
 - No recording, telemetry, analytics, or network calls are present.
-- Prompt duration is clamped to at least 1,000 ms.
-- Automatic prompts are separated by at least 30 seconds.
-- The disclosure badge cannot be disabled while prompts are enabled.
 
 ## License
 
