@@ -1,0 +1,38 @@
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  windows-x64:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: microsoft/setup-msbuild@v2
+      - name: Restore virtual-camera dependencies
+        run: msbuild vendor/windows-camera/VirtualCameraMediaSource/VirtualCameraMediaSource.vcxproj /t:Restore /p:RestorePackagesConfig=true /p:Configuration=Release /p:Platform=x64
+      - name: Build virtual-camera media source
+        run: msbuild vendor/windows-camera/VirtualCameraMediaSource/VirtualCameraMediaSource.vcxproj /m /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /p:WindowsTargetPlatformVersion=10.0.26100.0
+      - name: Configure
+        run: cmake -S . -B build -A x64
+      - name: Build
+        run: cmake --build build --config Release
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+      - name: Stage application
+        run: cmake --install build --config Release --prefix out
+      - name: Install Inno Setup
+        run: choco install innosetup --yes --no-progress
+      - name: Build installer
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\SubliminalCam.iss'
+      - name: Write checksum
+        shell: pwsh
+        run: Get-FileHash dist/SubliminalCamSetup-x64.exe -Algorithm SHA256 | Format-List | Out-File dist/SubliminalCamSetup-x64.sha256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SubliminalCam-windows-x64
+          path: |
+            dist/SubliminalCamSetup-x64.exe
+            dist/SubliminalCamSetup-x64.sha256.txt
+            out/

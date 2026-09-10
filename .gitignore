@@ -1,0 +1,12 @@
+/build*/
+/dist/
+/.vs/
+/out/
+*.user
+*.suo
+*.VC.db
+*.VC.opendb
+settings.ini
+/vendor/windows-camera/VirtualCameraMediaSource/packages/
+/vendor/windows-camera/VirtualCameraMediaSource/x64/
+/vendor/windows-camera/VirtualCameraMediaSource/VirtualC.*/
