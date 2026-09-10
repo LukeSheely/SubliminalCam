@@ -27,7 +27,7 @@ jobs:
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
       - name: Stage application
-        run: cmake --install build --config Release --prefix out
+        run: cmake --install build --config Release --prefix "$env:GITHUB_WORKSPACE/out"
       - name: Install Inno Setup
         run: choco install innosetup --yes --no-progress
       - name: Build installer
