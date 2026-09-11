@@ -9,6 +9,11 @@ if(NOT WIN32)
   message(FATAL_ERROR "SubliminalCam currently supports Windows 11 only")
 endif()
 
+include(GNUInstallDirs)
+# The Inno Setup layout keeps the controller and its Qt runtime together at the
+# application root so Windows can resolve the DLLs without modifying PATH.
+set(CMAKE_INSTALL_BINDIR "." CACHE STRING "Runtime install directory" FORCE)
+
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets)
 qt_standard_project_setup()
 
