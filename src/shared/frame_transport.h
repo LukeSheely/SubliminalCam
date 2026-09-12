@@ -40,6 +40,7 @@ class SharedFrameWriter {
   SharedFrameWriter& operator=(const SharedFrameWriter&) = delete;
 
   bool write(const Frame& frame, std::uint64_t timestamp_100ns);
+  bool invalidate();
   void close();
 
  private:

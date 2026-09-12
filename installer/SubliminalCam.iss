@@ -1,5 +1,5 @@
 #define MyAppName "SubliminalCam"
-#define MyAppVersion "0.2.0"
+#define MyAppVersion "0.3.0"
 #define MyAppPublisher "SubliminalCam contributors"
 #define MyAppExeName "SubliminalCam.exe"
 

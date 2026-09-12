@@ -6,6 +6,9 @@
 #include "core/settings.h"
 #include "shared/frame_transport.h"
 
+#include <mfapi.h>
+#include <objbase.h>
+
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
@@ -19,12 +22,14 @@
 #include <QListWidget>
 #include <QMainWindow>
 #include <QMetaObject>
+#include <QMessageBox>
 #include <QPainter>
 #include <QPointer>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSlider>
 #include <QSplitter>
+#include <QStyle>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -139,7 +144,8 @@ class StudioWindow final : public QMainWindow {
     connect(&tick_timer_, &QTimer::timeout, this, [this] { tick(); });
     tick_timer_.start();
 
-    capture_ = std::make_unique<CameraCapture>([this](Frame frame) { process_frame(std::move(frame)); });
+    capture_ = std::make_unique<CameraCapture>(
+        [this](std::shared_ptr<Frame> frame) { process_frame(std::move(frame)); });
     start_camera();
   }
 
@@ -162,6 +168,9 @@ class StudioWindow final : public QMainWindow {
       QLabel#liveBadge { background: #1d412e; color: #71ec9c; border: 1px solid #2b6645;
                          border-radius: 14px; padding: 6px 12px; font-size: 11px;
                          font-weight: 700; letter-spacing: .6px; }
+      QLabel#pausedBadge { background: #292c33; color: #abb1bd; border: 1px solid #454a55;
+                           border-radius: 14px; padding: 6px 12px; font-size: 11px;
+                           font-weight: 700; letter-spacing: .6px; }
       QListWidget, QComboBox, QLineEdit { background: #181a1f; color: #edf0f5;
         border: 1px solid #343841; border-radius: 8px; padding: 7px 9px; selection-background-color: #254f8f; }
       QListWidget { padding: 5px; outline: 0; }
@@ -239,10 +248,31 @@ class StudioWindow final : public QMainWindow {
     titles->addWidget(subtitle);
     layout->addLayout(titles);
     layout->addStretch();
-    auto* live = new QLabel("●  OUTPUT LIVE");
-    live->setObjectName("liveBadge");
-    live->setAccessibleName("Virtual camera output is live");
-    layout->addWidget(live, 0, Qt::AlignVCenter);
+    output_button_ = new QPushButton("Stop output");
+    output_button_->setCheckable(true);
+    output_button_->setChecked(true);
+    output_button_->setAccessibleName("Start or stop virtual camera output");
+    layout->addWidget(output_button_, 0, Qt::AlignVCenter);
+    live_badge_ = new QLabel("●  OUTPUT LIVE");
+    live_badge_->setObjectName("liveBadge");
+    live_badge_->setAccessibleName("Virtual camera output is live");
+    layout->addWidget(live_badge_, 0, Qt::AlignVCenter);
+    connect(output_button_, &QPushButton::toggled, this, [this](bool running) {
+      output_enabled_ = running;
+      output_button_->setText(running ? "Stop output" : "Start output");
+      live_badge_->setText(running ? "●  OUTPUT LIVE" : "○  OUTPUT PAUSED");
+      live_badge_->setObjectName(running ? "liveBadge" : "pausedBadge");
+      live_badge_->style()->unpolish(live_badge_);
+      live_badge_->style()->polish(live_badge_);
+      live_badge_->setAccessibleName(running ? "Virtual camera output is live"
+                                             : "Virtual camera output is paused");
+      if (!running) {
+        std::scoped_lock lock(frame_writer_mutex_);
+        frame_writer_.invalidate();
+      }
+      show_status(running ? "Virtual camera output started"
+                          : "Virtual camera output paused");
+    });
     return bar;
   }
 
@@ -507,25 +537,28 @@ class StudioWindow final : public QMainWindow {
     }
   }
 
-  void process_frame(Frame frame) {
+  void process_frame(std::shared_ptr<Frame> frame) {
+    if (!frame) return;
     const auto started = std::chrono::steady_clock::now();
-    if (mirror_enabled_) mirror_horizontal(frame);
+    if (mirror_enabled_) mirror_horizontal(*frame);
     std::shared_ptr<Frame> custom;
     {
       std::scoped_lock lock(background_mutex_);
       custom = custom_background_;
     }
-    apply_effect(frame, static_cast<BackgroundMode>(background_mode_.load()),
+    apply_effect(*frame, static_cast<BackgroundMode>(background_mode_.load()),
                  blur_radius_.load(), custom);
     PromptState prompt;
     {
       std::scoped_lock lock(prompt_mutex_);
       prompt = prompt_;
     }
-    draw_prompt(frame, prompt);
-    frame_writer_.write(frame, static_cast<std::uint64_t>(now_ms()) * 10000u);
-    auto shared = std::make_shared<Frame>(std::move(frame));
-    if (!shutting_down_) preview_->submit(std::move(shared));
+    draw_prompt(*frame, prompt);
+    if (output_enabled_) {
+      std::scoped_lock lock(frame_writer_mutex_);
+      frame_writer_.write(*frame, static_cast<std::uint64_t>(now_ms()) * 10000u);
+    }
+    if (!shutting_down_) preview_->submit(std::move(frame));
     processing_us_ = static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - started).count());
@@ -598,12 +631,14 @@ class StudioWindow final : public QMainWindow {
   std::mutex background_mutex_;
   std::shared_ptr<Frame> custom_background_;
   SharedFrameWriter frame_writer_;
+  std::mutex frame_writer_mutex_;
   std::unique_ptr<CameraCapture> capture_;
   std::vector<CameraDevice> cameras_;
   std::atomic_bool mirror_enabled_{true};
   std::atomic_int background_mode_{0};
   std::atomic_int blur_radius_{12};
   std::atomic_bool shutting_down_{false};
+  std::atomic_bool output_enabled_{true};
   std::atomic_uint64_t rendered_frames_{0};
   std::atomic_uint64_t processing_us_{0};
   std::uint64_t last_stats_frames_{};
@@ -625,6 +660,8 @@ class StudioWindow final : public QMainWindow {
   QPushButton* save_{};
   QLabel* metrics_{};
   QLabel* status_{};
+  QLabel* live_badge_{};
+  QPushButton* output_button_{};
 };
 
 }  // namespace
@@ -634,7 +671,28 @@ int main(int argc, char* argv[]) {
   QApplication::setApplicationName("SubliminalCam Studio");
   QApplication::setOrganizationName("SubliminalCam");
   QApplication::setStyle("Fusion");
-  StudioWindow window;
-  window.show();
-  return app.exec();
+
+  const HRESULT com_result = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+  if (FAILED(com_result) && com_result != RPC_E_CHANGED_MODE) {
+    QMessageBox::critical(nullptr, "SubliminalCam",
+                          "Windows COM initialization failed. The camera controller cannot start.");
+    return 1;
+  }
+  const HRESULT media_foundation_result = MFStartup(MF_VERSION, MFSTARTUP_FULL);
+  if (FAILED(media_foundation_result)) {
+    QMessageBox::critical(nullptr, "SubliminalCam",
+                          "Windows Media Foundation initialization failed. Restart Windows and try again.");
+    if (SUCCEEDED(com_result)) CoUninitialize();
+    return 1;
+  }
+
+  int result = 0;
+  {
+    StudioWindow window;
+    window.show();
+    result = app.exec();
+  }
+  MFShutdown();
+  if (SUCCEEDED(com_result)) CoUninitialize();
+  return result;
 }

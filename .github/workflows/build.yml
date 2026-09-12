@@ -26,12 +26,56 @@ jobs:
         run: cmake --build build --config Release
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
+      - name: Sign application binaries when a certificate is configured
+        shell: pwsh
+        env:
+          SIGNING_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_BASE64 }}
+          SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:SIGNING_CERTIFICATE_BASE64)) {
+            Write-Host "Signing certificate not configured; leaving development artifacts unsigned."
+            exit 0
+          }
+          if ([string]::IsNullOrWhiteSpace($env:SIGNING_CERTIFICATE_PASSWORD)) {
+            throw "WINDOWS_SIGNING_CERTIFICATE_PASSWORD is required when a certificate is configured."
+          }
+          $certificatePath = Join-Path $env:RUNNER_TEMP "subliminalcam-signing.pfx"
+          [IO.File]::WriteAllBytes($certificatePath,
+            [Convert]::FromBase64String($env:SIGNING_CERTIFICATE_BASE64))
+          $signTool = (Get-Command signtool.exe -ErrorAction Stop).Source
+          $targets = @(
+            "build/Release/SubliminalCam.exe",
+            "build/Release/SubliminalCamVcamCtl.exe",
+            "vendor/windows-camera/VirtualCameraMediaSource/x64/Release/VirtualCameraMediaSource.dll"
+          )
+          foreach ($target in $targets) {
+            & $signTool sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com `
+              /f $certificatePath /p $env:SIGNING_CERTIFICATE_PASSWORD $target
+            if ($LASTEXITCODE -ne 0) { throw "Signing failed for $target" }
+          }
+          Remove-Item -LiteralPath $certificatePath -Force
       - name: Stage application
         run: cmake --install build --config Release --prefix "$env:GITHUB_WORKSPACE/out"
       - name: Install Inno Setup
         run: choco install innosetup --yes --no-progress
       - name: Build installer
         run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\SubliminalCam.iss'
+      - name: Sign installer when a certificate is configured
+        shell: pwsh
+        env:
+          SIGNING_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_BASE64 }}
+          SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:SIGNING_CERTIFICATE_BASE64)) { exit 0 }
+          $certificatePath = Join-Path $env:RUNNER_TEMP "subliminalcam-installer-signing.pfx"
+          [IO.File]::WriteAllBytes($certificatePath,
+            [Convert]::FromBase64String($env:SIGNING_CERTIFICATE_BASE64))
+          $signTool = (Get-Command signtool.exe -ErrorAction Stop).Source
+          & $signTool sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com `
+            /f $certificatePath /p $env:SIGNING_CERTIFICATE_PASSWORD `
+            "dist/SubliminalCamSetup-x64.exe"
+          if ($LASTEXITCODE -ne 0) { throw "Installer signing failed" }
+          Remove-Item -LiteralPath $certificatePath -Force
       - name: Write checksum
         shell: pwsh
         run: Get-FileHash dist/SubliminalCamSetup-x64.exe -Algorithm SHA256 | Format-List | Out-File dist/SubliminalCamSetup-x64.sha256.txt

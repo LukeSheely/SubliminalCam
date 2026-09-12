@@ -13,6 +13,7 @@ The first development milestone is implemented:
 - Live full-frame blur, solid/gradient presets, custom PNG/JPEG backgrounds, portrait-mask composition primitives, and mirroring
 - Local settings persistence
 - Native unit tests and CI configuration
+- Explicit start/stop output control with a stable offline slate
 
 The controller publishes its processed frames to a Windows Camera Frame Server media-source DLL. `SubliminalCamVcamCtl.exe` and the installer register that source as a selectable Windows virtual camera.
 
@@ -43,6 +44,12 @@ SubliminalCamVcamCtl.exe install .\VirtualCameraMediaSource.dll
 ```
 
 Remove it with `SubliminalCamVcamCtl.exe remove`.
+
+See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for camera flicker, stale DLL, and app-discovery checks.
+
+CI signing is optional. Configure the repository secrets
+`WINDOWS_SIGNING_CERTIFICATE_BASE64` (a base64-encoded PFX) and
+`WINDOWS_SIGNING_CERTIFICATE_PASSWORD` to sign the application binaries and installer.
 
 ## Privacy and safety
 

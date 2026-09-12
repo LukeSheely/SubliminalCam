@@ -3,8 +3,8 @@
 //
 #include "pch.h"
 
+#include <algorithm>
 #include <cstring>
-#include <vector>
 
 namespace
 {
@@ -45,44 +45,71 @@ namespace
         return g_frameView;
     }
 
-    bool ReadSharedFrame(std::vector<BYTE>& pixels, UINT32& width, UINT32& height, UINT32& stride)
+}
+
+bool SimpleFrameGenerator::_ReadSharedFrame()
+{
+    const auto now = GetTickCount64();
+    const auto cachedIsRecent = [this, now]
     {
-        const auto* view = OpenSharedFrame();
-        if (!view)
-        {
-            return false;
-        }
-        const auto* header = reinterpret_cast<const subliminalcam::SharedFrameHeader*>(view);
-        for (int attempt = 0; attempt < 3; ++attempt)
-        {
-            const LONG sequenceBefore = header->sequence;
-            if ((sequenceBefore & 1) != 0)
-            {
-                SwitchToThread();
-                continue;
-            }
-            MemoryBarrier();
-            if (header->magic != subliminalcam::kFrameMagic ||
-                header->version != subliminalcam::kFrameVersion ||
-                header->width == 0 || header->height == 0 ||
-                header->stride < header->width * 4 ||
-                header->data_bytes > subliminalcam::kMaxFrameBytes)
-            {
-                return false;
-            }
-            width = header->width;
-            height = header->height;
-            stride = header->stride;
-            pixels.resize(header->data_bytes);
-            std::memcpy(pixels.data(), view + sizeof(subliminalcam::SharedFrameHeader), pixels.size());
-            MemoryBarrier();
-            if (sequenceBefore == header->sequence)
-            {
-                return true;
-            }
-        }
-        return false;
+        return !m_sharedPixels.empty() &&
+            now - m_lastSharedFrameTick <= 2000;
+    };
+
+    const auto* view = OpenSharedFrame();
+    if (!view)
+    {
+        return cachedIsRecent();
     }
+    const auto* header = reinterpret_cast<const subliminalcam::SharedFrameHeader*>(view);
+    for (int attempt = 0; attempt < 8; ++attempt)
+    {
+        const LONG sequenceBefore = header->sequence;
+        if ((sequenceBefore & 1) != 0)
+        {
+            if (attempt < 4) YieldProcessor(); else SwitchToThread();
+            continue;
+        }
+        MemoryBarrier();
+        const UINT32 width = header->width;
+        const UINT32 height = header->height;
+        const UINT32 stride = header->stride;
+        const UINT32 dataBytes = header->data_bytes;
+        if (header->magic != subliminalcam::kFrameMagic ||
+            header->version != subliminalcam::kFrameVersion ||
+            width == 0 || height == 0 ||
+            stride < width * 4 ||
+            dataBytes < static_cast<ULONGLONG>(stride) * height ||
+            dataBytes > subliminalcam::kMaxFrameBytes)
+        {
+            return cachedIsRecent();
+        }
+
+        // Avoid another multi-megabyte copy when the consumer requests more
+        // frequently than the controller publishes.
+        if (!m_sharedPixels.empty() && sequenceBefore == m_sharedSequence)
+        {
+            return cachedIsRecent();
+        }
+
+        m_sharedReadBuffer.resize(dataBytes);
+        std::memcpy(m_sharedReadBuffer.data(),
+            view + sizeof(subliminalcam::SharedFrameHeader), dataBytes);
+        MemoryBarrier();
+        if (sequenceBefore == header->sequence && (sequenceBefore & 1) == 0)
+        {
+            m_sharedPixels.swap(m_sharedReadBuffer);
+            m_sharedWidth = width;
+            m_sharedHeight = height;
+            m_sharedStride = stride;
+            m_sharedSequence = sequenceBefore;
+            m_lastSharedFrameTick = now;
+            return true;
+        }
+    }
+    // A collision is not an offline signal. Holding the last complete frame is
+    // visually stable and prevents single-frame flashes of the diagnostic slate.
+    return cachedIsRecent();
 }
 
 HRESULT SimpleFrameGenerator::Initialize(_In_ IMFMediaType* pMediaType)
@@ -125,11 +152,11 @@ HRESULT SimpleFrameGenerator::CreateFrame(
         DEBUG_MSG(L"NV12 frames %s \n", winrt::to_hstring(MFVideoFormat_NV12).data());
 
         DWORD frameBuffLen = m_width * m_height * 4;
-        wil::unique_cotaskmem_ptr<BYTE[]> spBuff = wil::make_unique_cotaskmem_nothrow<BYTE[]>(frameBuffLen);
-        RETURN_IF_NULL_ALLOC(spBuff.get());
-
-        RETURN_IF_FAILED(_CreateRGB32Frame(spBuff.get(), frameBuffLen, m_width * 4, m_width, m_height, rgbMask));
-        RETURN_IF_FAILED(RGB32ToNV12Frame(spBuff.get(), frameBuffLen, m_width * 4, m_width, m_height, pBuf, len, pitch));
+        m_rgbConversionBuffer.resize(frameBuffLen);
+        RETURN_IF_FAILED(_CreateRGB32Frame(m_rgbConversionBuffer.data(), frameBuffLen,
+            m_width * 4, m_width, m_height, rgbMask));
+        RETURN_IF_FAILED(RGB32ToNV12Frame(m_rgbConversionBuffer.data(), frameBuffLen,
+            m_width * 4, m_width, m_height, pBuf, len, pitch));
     }
     else
     {
@@ -156,37 +183,41 @@ HRESULT SimpleFrameGenerator::_CreateRGB32Frame(
         return HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER);
     }
 
-    std::vector<BYTE> sharedPixels;
-    UINT32 sharedWidth = 0;
-    UINT32 sharedHeight = 0;
-    UINT32 sharedStride = 0;
-    if (ReadSharedFrame(sharedPixels, sharedWidth, sharedHeight, sharedStride))
+    if (_ReadSharedFrame())
     {
+        if (m_sharedWidth == width && m_sharedHeight == height)
+        {
+            for (DWORD y = 0; y < height; ++y)
+            {
+                std::memcpy(pBuf + static_cast<size_t>(y) * pitch,
+                    m_sharedPixels.data() + static_cast<size_t>(y) * m_sharedStride,
+                    static_cast<size_t>(width) * sizeof(uint32_t));
+            }
+            return S_OK;
+        }
         for (DWORD y = 0; y < height; ++y)
         {
-            const DWORD sourceY = static_cast<DWORD>((static_cast<ULONGLONG>(y) * sharedHeight) / height);
+            const DWORD sourceY = static_cast<DWORD>((static_cast<ULONGLONG>(y) * m_sharedHeight) / height);
             auto* destination = reinterpret_cast<uint32_t*>(pBuf + static_cast<size_t>(y) * pitch);
             const auto* source = reinterpret_cast<const uint32_t*>(
-                sharedPixels.data() + static_cast<size_t>(sourceY) * sharedStride);
+                m_sharedPixels.data() + static_cast<size_t>(sourceY) * m_sharedStride);
             for (DWORD x = 0; x < width; ++x)
             {
-                const DWORD sourceX = static_cast<DWORD>((static_cast<ULONGLONG>(x) * sharedWidth) / width);
+                const DWORD sourceX = static_cast<DWORD>((static_cast<ULONGLONG>(x) * m_sharedWidth) / width);
                 destination[x] = source[sourceX];
             }
         }
         return S_OK;
     }
 
-    // Stable diagnostic pattern while the controller is not publishing frames.
-    LONGLONG curSysTimeInS = MFGetSystemTime() / (MFTIME)10000000;
-    int offset = curSysTimeInS % height;
-
+    // Static diagnostic slate while the controller is not publishing frames.
     for (unsigned int r = 0; r < height; r++)
     {
         uint32_t* p = (uint32_t*)(pBuf + (r * pitch));
         for (unsigned int c = 0; c < width; c++)
         {
-            BYTE gray = (BYTE)(r + offset);
+            const BYTE gray = static_cast<BYTE>(24 + (r * 28 / std::max<DWORD>(1, height - 1)) +
+                (((r / 72) & 1) ? 5 : 0));
             *p = ((uint32_t)gray << 16 | (uint32_t)gray << 8 | (uint32_t)gray) & rgbMask;
             p++;
         }

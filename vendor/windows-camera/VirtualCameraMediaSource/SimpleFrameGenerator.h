@@ -6,6 +6,8 @@
 #ifndef SIMPLE_FRAME_GENERATOR_H
 #define SIMPLE_FRAME_GENERATOR_H
 
+#include <vector>
+
 class SimpleFrameGenerator
 {
 public:
@@ -28,6 +30,8 @@ public:
     static HRESULT RGB32ToNV12Frame(_Inout_updates_bytes_(len) BYTE* pbBuff, ULONG cbBuff, long stride, UINT width, UINT height, BYTE* pbBuffOut, ULONG cbBuffOut, long strideOut);
 
 private: 
+    bool _ReadSharedFrame();
+
     HRESULT _CreateRGB32Frame(
         _Inout_updates_bytes_(len) BYTE* pBuf,
         _In_ DWORD len,
@@ -39,10 +43,17 @@ private:
     UINT32 m_width = 0;
     UINT32 m_height = 0;
     GUID m_subType = GUID_NULL;
+    std::vector<BYTE> m_sharedPixels;
+    std::vector<BYTE> m_sharedReadBuffer;
+    std::vector<BYTE> m_rgbConversionBuffer;
+    UINT32 m_sharedWidth = 0;
+    UINT32 m_sharedHeight = 0;
+    UINT32 m_sharedStride = 0;
+    LONG m_sharedSequence = 0;
+    ULONGLONG m_lastSharedFrameTick = 0;
 
 };
 
 #endif
-
 
 

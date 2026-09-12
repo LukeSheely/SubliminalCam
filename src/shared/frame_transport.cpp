@@ -56,6 +56,17 @@ bool SharedFrameWriter::write(const Frame& frame, std::uint64_t timestamp_100ns)
   return true;
 }
 
+bool SharedFrameWriter::invalidate() {
+  if (!ensure_open()) return false;
+  auto* header = reinterpret_cast<SharedFrameHeader*>(view_);
+  InterlockedIncrement(&header->sequence);  // odd: update in progress
+  header->magic = 0;
+  header->timestamp_100ns = 0;
+  MemoryBarrier();
+  InterlockedIncrement(&header->sequence);  // even: stable offline state
+  return true;
+}
+
 void SharedFrameWriter::close() {
   if (view_) UnmapViewOfFile(view_);
   if (mapping_) CloseHandle(mapping_);

@@ -210,12 +210,21 @@ namespace winrt::WindowsSample::implementation
             &bufferLength));
         
 
-        RETURN_IF_FAILED(m_spFrameGenerator->CreateFrame(pbuf, bufferLength, pitch, m_rgbMask));
+        const HRESULT frameResult = m_spFrameGenerator->CreateFrame(
+            pbuf, bufferLength, pitch, m_rgbMask);
         //RETURN_IF_FAILED(WriteSampleData(pbuf, bufferLength, pitch, NUM_IMAGE_COLS, NUM_IMAGE_ROWS));
-        RETURN_IF_FAILED(buffer2D->Unlock2D());
+        const HRESULT unlockResult = buffer2D->Unlock2D();
+        RETURN_IF_FAILED(frameResult);
+        RETURN_IF_FAILED(unlockResult);
 
-        RETURN_IF_FAILED(sample->SetSampleTime(MFGetSystemTime()));
-        RETURN_IF_FAILED(sample->SetSampleDuration(333333));
+        constexpr LONGLONG sampleDuration = 333333;
+        const LONGLONG systemTime = MFGetSystemTime();
+        const LONGLONG sampleTime = m_lastSampleTime == 0
+            ? systemTime
+            : (std::max)(systemTime, m_lastSampleTime + sampleDuration);
+        m_lastSampleTime = sampleTime;
+        RETURN_IF_FAILED(sample->SetSampleTime(sampleTime));
+        RETURN_IF_FAILED(sample->SetSampleDuration(sampleDuration));
         if (pToken != nullptr)
         {
             RETURN_IF_FAILED(sample->SetUnknown(MFSampleExtension_Token, pToken));
@@ -414,6 +423,7 @@ namespace winrt::WindowsSample::implementation
 
         if ((m_streamState != MF_STREAM_STATE_RUNNING) || !bMatch)
         {
+            m_lastSampleTime = 0;
             // Create the allocator if one doesn't exist
             if (m_allocatorUsage == MFSampleAllocatorUsage_UsesProvidedAllocator)
             {
@@ -467,4 +477,3 @@ namespace winrt::WindowsSample::implementation
         return S_OK;
     }
 }
-

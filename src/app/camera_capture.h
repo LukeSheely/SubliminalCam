@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <functional>
+#include <memory>
 #include <string>
 #include <thread>
 
@@ -11,7 +12,7 @@ namespace subliminalcam {
 
 class CameraCapture {
  public:
-  using FrameCallback = std::function<void(Frame)>;
+  using FrameCallback = std::function<void(std::shared_ptr<Frame>)>;
 
   explicit CameraCapture(FrameCallback callback);
   ~CameraCapture();
