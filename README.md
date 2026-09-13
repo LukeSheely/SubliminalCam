@@ -1,16 +1,19 @@
 # SubliminalCam
 
-SubliminalCam is a Windows 11 camera-effects project for video calls.
+SubliminalCam is a small Windows 11 virtual camera for video calls. It passes a
+physical camera through and lets the operator show or hide one visible text
+message with a button.
 
-This repository does not implement covert or below-awareness messaging.
+This repository does not implement timed, fading, covert, or below-awareness messaging.
 
 ## Current status
 
-The first development milestone is implemented:
+The focused application is implemented:
 
-- OBS-inspired Qt 6 studio controller with resizable Scenes, Sources, Program, and Inspector panes
+- Simple Qt 6 controller with a large live preview
 - Physical-camera enumeration through Media Foundation
-- Live full-frame blur, solid/gradient presets, custom PNG/JPEG backgrounds, portrait-mask composition primitives, and mirroring
+- One message field and an immediate **Show message / Hide message** toggle
+- Optional camera mirroring; background effects are intentionally left to video-call software
 - Local settings persistence
 - Native unit tests and CI configuration
 - Explicit start/stop output control with a stable offline slate

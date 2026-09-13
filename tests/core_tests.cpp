@@ -1,11 +1,10 @@
 #include "core/compositor.h"
-#include "core/prompt_scheduler.h"
 #include "core/settings.h"
 
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <stdexcept>
-#include <vector>
 
 using namespace subliminalcam;
 
@@ -13,71 +12,33 @@ void require(bool condition, const char* message) {
   if (!condition) throw std::runtime_error(message);
 }
 
-void test_guardrails() {
-  AppSettings input;
-  input.prompts.enabled = true;
-  input.prompts.duration_ms = 1;
-  input.prompts.interval_ms = 2;
-  input.blur_radius = 1000;
-  const auto clean = sanitize(input);
-  require(clean.prompts.duration_ms == 1000, "duration guardrail");
-  require(clean.prompts.interval_ms == 30000, "interval guardrail");
-  require(clean.blur_radius == 48, "blur clamp");
+void test_mirror() {
+  Frame frame(2, 1);
+  frame.at(0, 0) = Pixel{1, 2, 3, 255};
+  frame.at(1, 0) = Pixel{4, 5, 6, 255};
+  mirror_horizontal(frame);
+  require(frame.at(0, 0).r == 6 && frame.at(1, 0).r == 3, "horizontal mirror");
 }
 
-void test_scheduler() {
-  PromptScheduler scheduler;
-  PromptSettings settings;
-  settings.enabled = true;
-  settings.duration_ms = 1000;
-  settings.interval_ms = 30000;
-  settings.messages = {L"Hello", L"World"};
-  scheduler.configure(settings, 100);
-  require(scheduler.tick(100).disclosure_visible, "disclosure should be persistent");
-  scheduler.show_now(200);
-  const auto visible = scheduler.tick(200);
-  require(visible.prompt_visible && visible.message == L"Hello", "manual prompt");
-  require(!scheduler.tick(1200).prompt_visible, "manual prompt expiration");
-  const auto automatic = scheduler.tick(30200);
-  require(automatic.prompt_visible && automatic.message == L"World", "automatic rotation");
-}
-
-void test_compositor() {
-  const Pixel top{0, 0, 0, 255};
-  const Pixel bottom{255, 255, 255, 255};
-  auto gradient = gradient_background(2, 2, top, bottom);
-  require(gradient.at(0, 0).r == 0 && gradient.at(0, 1).r == 255, "gradient endpoints");
-
-  Frame foreground = solid_background(2, 1, Pixel{10, 20, 30, 255});
-  Frame background = solid_background(2, 1, Pixel{100, 110, 120, 255});
-  std::vector<std::uint8_t> mask{255, 0};
-  auto output = composite_portrait(foreground, background, mask);
-  require(output.at(0, 0).r == 30 && output.at(1, 0).r == 120, "mask composition");
-  mirror_horizontal(output);
-  require(output.at(0, 0).r == 120 && output.at(1, 0).r == 30, "mirror");
-
-  Frame impulse = solid_background(3, 1, Pixel{0, 0, 0, 255});
-  impulse.at(1, 0) = Pixel{255, 255, 255, 255};
-  auto blurred = box_blur(impulse, 1);
-  require(blurred.at(1, 0).r > 0 && blurred.at(1, 0).r < 255, "blur");
-
-  Frame in_place = impulse;
-  Frame scratch(impulse.width, impulse.height);
-  box_blur_in_place(in_place, 1, scratch);
-  require(in_place.pixels.size() == blurred.pixels.size(), "in-place blur dimensions");
-  for (std::size_t i = 0; i < blurred.pixels.size(); ++i) {
-    require(in_place.pixels[i].r == blurred.pixels[i].r &&
-            in_place.pixels[i].g == blurred.pixels[i].g &&
-            in_place.pixels[i].b == blurred.pixels[i].b,
-            "in-place blur equivalence");
-  }
+void test_settings() {
+  const auto path = std::filesystem::temp_directory_path() / "subliminalcam-settings-test.ini";
+  AppSettings source;
+  source.camera_id = L"camera-id";
+  source.message = L"Visible message";
+  source.mirror = false;
+  require(save_settings(source, path), "settings save");
+  const auto loaded = load_settings(path);
+  std::error_code ignored;
+  std::filesystem::remove(path, ignored);
+  require(loaded.camera_id == source.camera_id, "camera setting");
+  require(loaded.message == source.message, "message setting");
+  require(!loaded.mirror, "mirror setting");
 }
 
 int main() {
   try {
-    test_guardrails();
-    test_scheduler();
-    test_compositor();
+    test_mirror();
+    test_settings();
     std::cout << "All SubliminalCam core tests passed.\n";
     return EXIT_SUCCESS;
   } catch (const std::exception& error) {

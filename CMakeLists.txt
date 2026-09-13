@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(SubliminalCam VERSION 0.4.0 LANGUAGES CXX)
+project(SubliminalCam VERSION 0.5.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -20,7 +20,6 @@ qt_standard_project_setup()
 add_library(subliminalcam_core STATIC
   src/core/compositor.cpp
   src/core/diagnostics.cpp
-  src/core/prompt_scheduler.cpp
   src/core/settings.cpp
   src/shared/frame_transport.cpp
 )
@@ -32,12 +31,11 @@ qt_add_executable(SubliminalCam WIN32
   src/app/main.cpp
   src/app/camera_devices.cpp
   src/app/camera_capture.cpp
-  src/app/image_loader.cpp
 )
 target_link_libraries(SubliminalCam PRIVATE
   subliminalcam_core
   Qt6::Core Qt6::Gui Qt6::Widgets
-  mfplat mf mfreadwrite mfuuid ole32 windowscodecs shlwapi
+  mfplat mf mfreadwrite mfuuid ole32
 )
 target_compile_definitions(SubliminalCam PRIVATE UNICODE _UNICODE NOMINMAX)
 if(MSVC)
