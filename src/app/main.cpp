@@ -3,6 +3,7 @@
 #include "app/image_loader.h"
 #include "core/compositor.h"
 #include "core/diagnostics.h"
+#include "core/overlay_schedule.h"
 #include "core/settings.h"
 #include "shared/frame_transport.h"
 
@@ -16,6 +17,7 @@
 #include <QComboBox>
 #include <QDateTime>
 #include <QDialog>
+#include <QDoubleSpinBox>
 #include <QFile>
 #include <QFileDialog>
 #include <QFont>
@@ -41,6 +43,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -142,8 +145,14 @@ class StudioWindow final : public QMainWindow {
     connect(&tick_timer_, &QTimer::timeout, this, [this] { tick(); });
     tick_timer_.start();
 
+    schedule_timer_.setTimerType(Qt::PreciseTimer);
+    schedule_timer_.setInterval(10);
+    connect(&schedule_timer_, &QTimer::timeout, this,
+            [this] { update_scheduled_visibility(); });
+    schedule_timer_.start();
+
     DiagnosticLog::instance().write(DiagnosticLevel::info, L"Application",
-                                     L"Controller initialized (version 0.6.0-simple)");
+                                     L"Controller initialized (version 0.7.0-simple)");
     capture_ = std::make_unique<CameraCapture>(
         [this](std::shared_ptr<Frame> frame) { process_frame(std::move(frame)); },
         [this](const CaptureStatus& status) {
@@ -174,7 +183,7 @@ class StudioWindow final : public QMainWindow {
       QLabel#pausedBadge { background: #292c33; color: #abb1bd; border: 1px solid #454a55; }
       QLabel#waitingBadge { background: #463719; color: #ffc85c; border: 1px solid #775d28; }
       QLabel#errorBadge { background: #482125; color: #ff8a91; border: 1px solid #7b353b; }
-      QComboBox, QLineEdit { background: #181a1f; color: #edf0f5; border: 1px solid #383c45;
+      QComboBox, QLineEdit, QDoubleSpinBox { background: #181a1f; color: #edf0f5; border: 1px solid #383c45;
         border-radius: 8px; padding: 8px 10px; selection-background-color: #254f8f; }
       QComboBox QAbstractItemView { background: #202229; border: 1px solid #414650; padding: 4px; }
       QCheckBox { color: #d7dae0; spacing: 7px; }
@@ -194,6 +203,21 @@ class StudioWindow final : public QMainWindow {
     auto* label = new QLabel(text);
     label->setObjectName("sectionLabel");
     return label;
+  }
+
+  static QDoubleSpinBox* timing_input(const QString& accessible_name) {
+    auto* input = new QDoubleSpinBox;
+    input->setAccessibleName(accessible_name);
+    input->setDecimals(2);
+    input->setRange(0.01, 3600.00);
+    input->setSingleStep(0.01);
+    input->setSuffix(" s");
+    input->setMinimumWidth(105);
+    return input;
+  }
+
+  static int centiseconds(const QDoubleSpinBox* input) {
+    return std::max(1, static_cast<int>(std::lround(input->value() * 100.0)));
   }
 
   void build_ui() {
@@ -237,7 +261,7 @@ class StudioWindow final : public QMainWindow {
     titles->setSpacing(0);
     auto* title = new QLabel("SubliminalCam");
     title->setObjectName("appTitle");
-    auto* subtitle = new QLabel("Camera passthrough + manual message overlay");
+    auto* subtitle = new QLabel("Camera passthrough + manual or repeating overlays");
     subtitle->setObjectName("subtitle");
     titles->addWidget(title);
     titles->addWidget(subtitle);
@@ -309,7 +333,18 @@ class StudioWindow final : public QMainWindow {
     message_toggle_->setMinimumWidth(140);
     row->addWidget(message_toggle_);
     layout->addLayout(row);
-    auto* hint = new QLabel("The message switches on and off immediately—no timer, animation, or fade.");
+    auto* timing = new QHBoxLayout;
+    message_repeat_ = new QCheckBox("Repeat automatically");
+    timing->addWidget(message_repeat_);
+    timing->addStretch();
+    timing->addWidget(new QLabel("Every"));
+    message_interval_ = timing_input("Message repeat interval");
+    timing->addWidget(message_interval_);
+    timing->addWidget(new QLabel("Show for"));
+    message_duration_ = timing_input("Message visible duration");
+    timing->addWidget(message_duration_);
+    layout->addLayout(timing);
+    auto* hint = new QLabel("Timing accepts 0.01-second steps; displayed timing follows the camera frame rate.");
     hint->setObjectName("subtitle");
     layout->addWidget(hint);
 
@@ -321,14 +356,30 @@ class StudioWindow final : public QMainWindow {
       if (text.trimmed().isEmpty() && message_toggle_->isChecked()) {
         message_toggle_->setChecked(false);
       }
+      update_scheduled_visibility();
     });
     connect(prompt_edit_, &QLineEdit::editingFinished, this, [this] { save_controls(); });
     connect(message_toggle_, &QPushButton::toggled, this, [this](bool visible) {
-      message_visible_ = visible;
+      message_manual_visible_ = visible;
+      update_scheduled_visibility();
       message_toggle_->setText(visible ? "Hide message" : "Show message");
-      show_status(visible ? "Message is visible on camera" : "Message hidden");
+      show_status(visible ? "Message held visible" : "Manual message display released");
       save_controls();
     });
+    connect(message_repeat_, &QCheckBox::toggled, this, [this](bool enabled) {
+      message_schedule_started_ms_ = now_ms();
+      update_scheduled_visibility();
+      if (!controls_loaded_) return;
+      show_status(enabled ? "Repeating message schedule started" : "Repeating message schedule stopped");
+      save_controls();
+    });
+    const auto timing_changed = [this](double) {
+      message_schedule_started_ms_ = now_ms();
+      update_scheduled_visibility();
+      if (controls_loaded_) save_controls();
+    };
+    connect(message_interval_, &QDoubleSpinBox::valueChanged, this, timing_changed);
+    connect(message_duration_, &QDoubleSpinBox::valueChanged, this, timing_changed);
     return card(content);
   }
 
@@ -353,12 +404,43 @@ class StudioWindow final : public QMainWindow {
     row->addWidget(image_toggle_);
     layout->addLayout(row);
 
+    auto* timing = new QHBoxLayout;
+    image_repeat_ = new QCheckBox("Repeat automatically");
+    image_repeat_->setEnabled(false);
+    timing->addWidget(image_repeat_);
+    timing->addStretch();
+    timing->addWidget(new QLabel("Every"));
+    image_interval_ = timing_input("Image repeat interval");
+    timing->addWidget(image_interval_);
+    timing->addWidget(new QLabel("Show for"));
+    image_duration_ = timing_input("Image visible duration");
+    timing->addWidget(image_duration_);
+    layout->addLayout(timing);
+    auto* hint = new QLabel("The first appearance occurs after the selected interval.");
+    hint->setObjectName("subtitle");
+    layout->addWidget(hint);
+
     connect(load_image_button_, &QPushButton::clicked, this, [this] { choose_image(); });
     connect(image_toggle_, &QPushButton::toggled, this, [this](bool visible) {
-      image_visible_ = visible;
+      image_manual_visible_ = visible;
+      update_scheduled_visibility();
       image_toggle_->setText(visible ? "Hide image" : "Show image");
-      show_status(visible ? "Full-screen image is visible" : "Full-screen image hidden");
+      show_status(visible ? "Image held visible" : "Manual image display released");
     });
+    connect(image_repeat_, &QCheckBox::toggled, this, [this](bool enabled) {
+      image_schedule_started_ms_ = now_ms();
+      update_scheduled_visibility();
+      if (!controls_loaded_) return;
+      show_status(enabled ? "Repeating image schedule started" : "Repeating image schedule stopped");
+      save_controls();
+    });
+    const auto timing_changed = [this](double) {
+      image_schedule_started_ms_ = now_ms();
+      update_scheduled_visibility();
+      if (controls_loaded_) save_controls();
+    };
+    connect(image_interval_, &QDoubleSpinBox::valueChanged, this, timing_changed);
+    connect(image_duration_, &QDoubleSpinBox::valueChanged, this, timing_changed);
     return card(content);
   }
 
@@ -398,6 +480,12 @@ class StudioWindow final : public QMainWindow {
     mirror_->setChecked(settings_.mirror);
     mirror_enabled_ = settings_.mirror;
     prompt_edit_->setText(QString::fromStdWString(settings_.message));
+    message_interval_->setValue(settings_.message_interval_centiseconds / 100.0);
+    message_duration_->setValue(settings_.message_duration_centiseconds / 100.0);
+    image_interval_->setValue(settings_.image_interval_centiseconds / 100.0);
+    image_duration_->setValue(settings_.image_duration_centiseconds / 100.0);
+    message_repeat_->setChecked(settings_.message_repeat);
+    image_repeat_->setChecked(settings_.image_repeat);
     message_toggle_->setChecked(false);
     if (!settings_.image_path.empty()) {
       if (auto loaded = load_image(settings_.image_path)) {
@@ -406,14 +494,24 @@ class StudioWindow final : public QMainWindow {
         image_name_->setText(QFileInfo(QString::fromStdWString(settings_.image_path)).fileName());
         image_name_->setToolTip(QString::fromStdWString(settings_.image_path));
         image_toggle_->setEnabled(true);
+        image_repeat_->setEnabled(true);
       }
     }
+    message_schedule_started_ms_ = now_ms();
+    image_schedule_started_ms_ = message_schedule_started_ms_;
     controls_loaded_ = true;
+    update_scheduled_visibility();
   }
 
   void save_controls() {
     settings_.message = prompt_edit_->text().toStdWString();
     settings_.mirror = mirror_->isChecked();
+    settings_.message_repeat = message_repeat_->isChecked();
+    settings_.message_interval_centiseconds = centiseconds(message_interval_);
+    settings_.message_duration_centiseconds = centiseconds(message_duration_);
+    settings_.image_repeat = image_repeat_->isChecked();
+    settings_.image_interval_centiseconds = centiseconds(image_interval_);
+    settings_.image_duration_centiseconds = centiseconds(image_duration_);
     save_settings(settings_, settings_path());
   }
 
@@ -436,7 +534,10 @@ class StudioWindow final : public QMainWindow {
     image_name_->setText(QFileInfo(path).fileName());
     image_name_->setToolTip(path);
     image_toggle_->setEnabled(true);
+    image_repeat_->setEnabled(true);
+    image_schedule_started_ms_ = now_ms();
     image_toggle_->setChecked(true);
+    update_scheduled_visibility();
   }
 
   void start_camera() {
@@ -515,7 +616,7 @@ class StudioWindow final : public QMainWindow {
     const auto current = GetTickCount64();
     output << "SubliminalCam diagnostic report\n"
            << "Generated: " << QDateTime::currentDateTime().toString(Qt::ISODateWithMs) << "\n"
-           << "App version: 0.6.0-simple\n"
+           << "App version: 0.7.0-simple\n"
            << "Windows: " << QSysInfo::prettyProductName() << " ("
            << QSysInfo::currentCpuArchitecture() << ")\n"
            << "Log: " << QString::fromStdWString(diagnostic_log_path().wstring()) << "\n\n"
@@ -540,8 +641,14 @@ class StudioWindow final : public QMainWindow {
     output << "\nOUTPUT\n"
            << "Enabled: " << (output_enabled_.load() ? "yes" : "no") << "\n"
            << "Message visible: " << (message_visible_.load() ? "yes" : "no") << "\n"
+           << "Message repeat: " << (message_repeat_->isChecked() ? "yes" : "no")
+           << " (every " << message_interval_->value() << " s for "
+           << message_duration_->value() << " s)\n"
            << "Image loaded: " << (loaded_image_ ? "yes" : "no") << "\n"
            << "Image visible: " << (image_visible_.load() ? "yes" : "no") << "\n"
+           << "Image repeat: " << (image_repeat_->isChecked() ? "yes" : "no")
+           << " (every " << image_interval_->value() << " s for "
+           << image_duration_->value() << " s)\n"
            << "Frames rendered: " << rendered_frames_.load() << "\n"
            << "Last processing time: " << processing_us_.load() / 1000.0 << " ms\n"
            << "Frames published: " << published_frames_.load() << "\n"
@@ -621,6 +728,30 @@ class StudioWindow final : public QMainWindow {
       status_->setStyleSheet({});
       status_->setText("Frames stay local · Ready for video apps");
     }
+  }
+
+  void update_scheduled_visibility() {
+    if (!message_repeat_ || !image_repeat_) return;
+    const auto current = now_ms();
+    bool has_message = false;
+    {
+      std::scoped_lock lock(message_mutex_);
+      has_message = !message_text_.empty();
+    }
+    const bool scheduled_message = has_message && scheduled_overlay_visible(
+        message_repeat_->isChecked(), current - message_schedule_started_ms_,
+        centiseconds(message_interval_), centiseconds(message_duration_));
+    message_visible_ = message_manual_visible_ || scheduled_message;
+
+    bool has_image = false;
+    {
+      std::scoped_lock lock(image_mutex_);
+      has_image = static_cast<bool>(loaded_image_);
+    }
+    const bool scheduled_image = has_image && scheduled_overlay_visible(
+        image_repeat_->isChecked(), current - image_schedule_started_ms_,
+        centiseconds(image_interval_), centiseconds(image_duration_));
+    image_visible_ = image_manual_visible_ || scheduled_image;
   }
 
   void process_frame(std::shared_ptr<Frame> frame) {
@@ -712,9 +843,11 @@ class StudioWindow final : public QMainWindow {
   std::vector<CameraDevice> cameras_;
   std::mutex message_mutex_;
   std::wstring message_text_;
+  bool message_manual_visible_{};
   std::atomic_bool message_visible_{false};
   std::mutex image_mutex_;
   std::shared_ptr<Frame> loaded_image_;
+  bool image_manual_visible_{};
   std::atomic_bool image_visible_{false};
   std::atomic_bool mirror_enabled_{true};
   std::atomic_bool shutting_down_{false};
@@ -728,17 +861,26 @@ class StudioWindow final : public QMainWindow {
   std::uint64_t last_stats_frames_{};
   std::int64_t last_stats_at_{now_ms()};
   std::int64_t status_reset_at_{};
+  std::int64_t message_schedule_started_ms_{};
+  std::int64_t image_schedule_started_ms_{};
   bool controls_loaded_{};
   CaptureStatus last_capture_status_;
   QTimer tick_timer_;
+  QTimer schedule_timer_;
   PreviewWidget* preview_{};
   QComboBox* camera_combo_{};
   QPushButton* refresh_cameras_button_{};
   QCheckBox* mirror_{};
   QLineEdit* prompt_edit_{};
   QPushButton* message_toggle_{};
+  QCheckBox* message_repeat_{};
+  QDoubleSpinBox* message_interval_{};
+  QDoubleSpinBox* message_duration_{};
   QPushButton* load_image_button_{};
   QPushButton* image_toggle_{};
+  QCheckBox* image_repeat_{};
+  QDoubleSpinBox* image_interval_{};
+  QDoubleSpinBox* image_duration_{};
   QLabel* image_name_{};
   QLabel* metrics_{};
   QLabel* status_{};

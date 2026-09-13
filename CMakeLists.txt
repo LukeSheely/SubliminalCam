@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(SubliminalCam VERSION 0.6.0 LANGUAGES CXX)
+project(SubliminalCam VERSION 0.7.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -20,6 +20,7 @@ qt_standard_project_setup()
 add_library(subliminalcam_core STATIC
   src/core/compositor.cpp
   src/core/diagnostics.cpp
+  src/core/overlay_schedule.cpp
   src/core/settings.cpp
   src/shared/frame_transport.cpp
 )

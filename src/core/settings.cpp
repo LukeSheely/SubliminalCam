@@ -1,5 +1,6 @@
 #include "core/settings.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <fstream>
 
@@ -21,11 +22,17 @@ bool save_settings(const AppSettings& settings, const std::filesystem::path& pat
   std::filesystem::create_directories(path.parent_path(), ec);
   std::wofstream out(path, std::ios::trunc);
   if (!out) return false;
-  out << L"version=2\n"
+  out << L"version=3\n"
       << L"camera_id=" << settings.camera_id << L"\n"
       << L"mirror=" << (settings.mirror ? 1 : 0) << L"\n"
       << L"message=" << settings.message << L"\n"
-      << L"image_path=" << settings.image_path << L"\n";
+      << L"image_path=" << settings.image_path << L"\n"
+      << L"message_repeat=" << (settings.message_repeat ? 1 : 0) << L"\n"
+      << L"message_interval_cs=" << settings.message_interval_centiseconds << L"\n"
+      << L"message_duration_cs=" << settings.message_duration_centiseconds << L"\n"
+      << L"image_repeat=" << (settings.image_repeat ? 1 : 0) << L"\n"
+      << L"image_interval_cs=" << settings.image_interval_centiseconds << L"\n"
+      << L"image_duration_cs=" << settings.image_duration_centiseconds << L"\n";
   return static_cast<bool>(out);
 }
 
@@ -44,6 +51,12 @@ AppSettings load_settings(const std::filesystem::path& path) {
       else if (key == L"mirror") settings.mirror = value == L"1";
       else if (key == L"message" || key == L"prompt") settings.message = value;
       else if (key == L"image_path") settings.image_path = value;
+      else if (key == L"message_repeat") settings.message_repeat = value == L"1";
+      else if (key == L"message_interval_cs") settings.message_interval_centiseconds = std::max(1, std::stoi(value));
+      else if (key == L"message_duration_cs") settings.message_duration_centiseconds = std::max(1, std::stoi(value));
+      else if (key == L"image_repeat") settings.image_repeat = value == L"1";
+      else if (key == L"image_interval_cs") settings.image_interval_centiseconds = std::max(1, std::stoi(value));
+      else if (key == L"image_duration_cs") settings.image_duration_centiseconds = std::max(1, std::stoi(value));
     } catch (...) {
       // Preserve defaults for malformed values.
     }

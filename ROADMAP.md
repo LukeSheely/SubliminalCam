@@ -3,9 +3,10 @@
 ## Focused controller (complete)
 
 - Camera picker, reconnect button, mirror option, live preview, and output toggle
-- One editable message with a manual show/hide button
-- One locally loaded full-screen image with a manual show/hide button
-- No background compositor, scheduler, animation, or fade pipeline
+- One editable message with manual show/hide and a repeating schedule
+- One locally loaded full-screen image with manual show/hide and a repeating schedule
+- Independent interval and duration controls with 0.01-second input precision
+- No background compositor, animation, or fade pipeline
 - Persistent local settings and deterministic native tests
 
 ## Physical-camera pipeline (complete)

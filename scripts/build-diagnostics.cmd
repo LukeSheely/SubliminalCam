@@ -27,6 +27,7 @@ cl.exe /nologo /std:c++20 /EHsc /O2 /DUNICODE /D_UNICODE /DNOMINMAX ^
   /I"%~dp0..\src" ^
   "%~dp0..\tests\core_tests.cpp" ^
   "%~dp0..\src\core\compositor.cpp" ^
+  "%~dp0..\src\core\overlay_schedule.cpp" ^
   "%~dp0..\src\core\settings.cpp" ^
   /Fo:"%DIAGROOT%\\" ^
   /Fe:"%DIAGROOT%\subliminalcam_tests.exe"

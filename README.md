@@ -1,10 +1,10 @@
 # SubliminalCam
 
 SubliminalCam is a small Windows 11 virtual camera for video calls. It passes a
-physical camera through and lets the operator show or hide one visible text
-message with a button.
+physical camera through and lets the operator display a visible text message or
+full-frame image manually or on a repeating schedule.
 
-This repository does not implement timed, fading, covert, or below-awareness messaging.
+This repository does not implement fading, audio cues, or remote control.
 
 ## Current status
 
@@ -15,6 +15,9 @@ The focused application is implemented:
 - One message field and an immediate **Show message / Hide message** toggle
 - Load PNG/JPEG/BMP files and immediately switch the full camera view between
   the live feed and a centered, cover-cropped image
+- Independent repeating schedules for text and images, with start-to-start
+  intervals and visible durations configurable in 0.01-second increments
+- Manual toggles continue to work while a repeating schedule is enabled
 - Optional camera mirroring; background effects are intentionally left to video-call software
 - Local settings persistence
 - Native unit tests and CI configuration
@@ -73,6 +76,8 @@ CI signing is optional. Configure the repository secrets
 
 - Frames and messages are processed locally.
 - No recording, telemetry, analytics, or network calls are present.
+- Actual on-camera timing is limited by the selected camera/output frame rate;
+  for example, 30 FPS displays a new frame about every 0.033 seconds.
 
 ## License
 
