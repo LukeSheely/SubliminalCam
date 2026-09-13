@@ -25,6 +25,7 @@ void test_settings() {
   AppSettings source;
   source.camera_id = L"camera-id";
   source.message = L"Visible message";
+  source.image_path = L"C:\\background.png";
   source.mirror = false;
   require(save_settings(source, path), "settings save");
   const auto loaded = load_settings(path);
@@ -32,6 +33,7 @@ void test_settings() {
   std::filesystem::remove(path, ignored);
   require(loaded.camera_id == source.camera_id, "camera setting");
   require(loaded.message == source.message, "message setting");
+  require(loaded.image_path == source.image_path, "image path setting");
   require(!loaded.mirror, "mirror setting");
 }
 

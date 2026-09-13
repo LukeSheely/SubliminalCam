@@ -68,3 +68,9 @@ include its exact model and driver version in a bug report.
 - Update the GPU and camera drivers.
 - Check the preview meter: consistent processing above 33 ms cannot sustain
   30 FPS and will look like stutter even when the transport itself is stable.
+
+## An image will not load
+
+Use a PNG, JPEG, or BMP file that Windows can decode. SubliminalCam keeps the
+selected image local, scales it to cover the whole camera frame, and starts each
+new app session with the image hidden. Reload the file if it was moved or deleted.

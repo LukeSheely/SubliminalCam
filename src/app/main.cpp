@@ -1,5 +1,6 @@
 #include "app/camera_capture.h"
 #include "app/camera_devices.h"
+#include "app/image_loader.h"
 #include "core/compositor.h"
 #include "core/diagnostics.h"
 #include "core/settings.h"
@@ -19,6 +20,7 @@
 #include <QFileDialog>
 #include <QFont>
 #include <QFrame>
+#include <QFileInfo>
 #include <QHBoxLayout>
 #include <QImage>
 #include <QLabel>
@@ -141,7 +143,7 @@ class StudioWindow final : public QMainWindow {
     tick_timer_.start();
 
     DiagnosticLog::instance().write(DiagnosticLevel::info, L"Application",
-                                     L"Controller initialized (version 0.5.1-simple)");
+                                     L"Controller initialized (version 0.6.0-simple)");
     capture_ = std::make_unique<CameraCapture>(
         [this](std::shared_ptr<Frame> frame) { process_frame(std::move(frame)); },
         [this](const CaptureStatus& status) {
@@ -182,6 +184,8 @@ class StudioWindow final : public QMainWindow {
       QPushButton:pressed { background: #252830; }
       QPushButton#messageToggle { background: #3f82e8; border-color: #5797f6; font-weight: 650; }
       QPushButton#messageToggle:checked { background: #9d343c; border-color: #ca5059; }
+      QPushButton#imageToggle { background: #3f82e8; border-color: #5797f6; font-weight: 650; }
+      QPushButton#imageToggle:checked { background: #9d343c; border-color: #ca5059; }
       QToolTip { background: #2a2d34; color: white; border: 1px solid #4b515d; padding: 6px; }
     )";
   }
@@ -216,6 +220,7 @@ class StudioWindow final : public QMainWindow {
     preview_ = new PreviewWidget;
     body_layout->addWidget(preview_, 1);
     body_layout->addWidget(build_message_controls());
+    body_layout->addWidget(build_image_controls());
 
     shell->addWidget(body, 1);
     shell->addWidget(build_status());
@@ -327,6 +332,36 @@ class StudioWindow final : public QMainWindow {
     return card(content);
   }
 
+  QWidget* build_image_controls() {
+    auto* content = new QWidget;
+    auto* layout = new QVBoxLayout(content);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(9);
+    layout->addWidget(section_label("FULL-SCREEN IMAGE"));
+    auto* row = new QHBoxLayout;
+    load_image_button_ = new QPushButton("Load image…");
+    row->addWidget(load_image_button_);
+    image_name_ = new QLabel("No image loaded");
+    image_name_->setObjectName("subtitle");
+    image_name_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    row->addWidget(image_name_, 1);
+    image_toggle_ = new QPushButton("Show image");
+    image_toggle_->setObjectName("imageToggle");
+    image_toggle_->setCheckable(true);
+    image_toggle_->setEnabled(false);
+    image_toggle_->setMinimumWidth(140);
+    row->addWidget(image_toggle_);
+    layout->addLayout(row);
+
+    connect(load_image_button_, &QPushButton::clicked, this, [this] { choose_image(); });
+    connect(image_toggle_, &QPushButton::toggled, this, [this](bool visible) {
+      image_visible_ = visible;
+      image_toggle_->setText(visible ? "Hide image" : "Show image");
+      show_status(visible ? "Full-screen image is visible" : "Full-screen image hidden");
+    });
+    return card(content);
+  }
+
   QWidget* build_status() {
     auto* bar = new QFrame;
     bar->setObjectName("statusBar");
@@ -364,6 +399,15 @@ class StudioWindow final : public QMainWindow {
     mirror_enabled_ = settings_.mirror;
     prompt_edit_->setText(QString::fromStdWString(settings_.message));
     message_toggle_->setChecked(false);
+    if (!settings_.image_path.empty()) {
+      if (auto loaded = load_image(settings_.image_path)) {
+        std::scoped_lock lock(image_mutex_);
+        loaded_image_ = std::make_shared<Frame>(std::move(*loaded));
+        image_name_->setText(QFileInfo(QString::fromStdWString(settings_.image_path)).fileName());
+        image_name_->setToolTip(QString::fromStdWString(settings_.image_path));
+        image_toggle_->setEnabled(true);
+      }
+    }
     controls_loaded_ = true;
   }
 
@@ -371,6 +415,28 @@ class StudioWindow final : public QMainWindow {
     settings_.message = prompt_edit_->text().toStdWString();
     settings_.mirror = mirror_->isChecked();
     save_settings(settings_, settings_path());
+  }
+
+  void choose_image() {
+    const auto path = QFileDialog::getOpenFileName(
+        this, "Load full-screen image", {},
+        "Images (*.png *.jpg *.jpeg *.bmp);;All files (*.*)");
+    if (path.isEmpty()) return;
+    auto loaded = load_image(path.toStdWString());
+    if (!loaded) {
+      show_status("That image could not be decoded", true);
+      return;
+    }
+    {
+      std::scoped_lock lock(image_mutex_);
+      loaded_image_ = std::make_shared<Frame>(std::move(*loaded));
+    }
+    settings_.image_path = path.toStdWString();
+    save_controls();
+    image_name_->setText(QFileInfo(path).fileName());
+    image_name_->setToolTip(path);
+    image_toggle_->setEnabled(true);
+    image_toggle_->setChecked(true);
   }
 
   void start_camera() {
@@ -449,7 +515,7 @@ class StudioWindow final : public QMainWindow {
     const auto current = GetTickCount64();
     output << "SubliminalCam diagnostic report\n"
            << "Generated: " << QDateTime::currentDateTime().toString(Qt::ISODateWithMs) << "\n"
-           << "App version: 0.5.1-simple\n"
+           << "App version: 0.6.0-simple\n"
            << "Windows: " << QSysInfo::prettyProductName() << " ("
            << QSysInfo::currentCpuArchitecture() << ")\n"
            << "Log: " << QString::fromStdWString(diagnostic_log_path().wstring()) << "\n\n"
@@ -474,6 +540,8 @@ class StudioWindow final : public QMainWindow {
     output << "\nOUTPUT\n"
            << "Enabled: " << (output_enabled_.load() ? "yes" : "no") << "\n"
            << "Message visible: " << (message_visible_.load() ? "yes" : "no") << "\n"
+           << "Image loaded: " << (loaded_image_ ? "yes" : "no") << "\n"
+           << "Image visible: " << (image_visible_.load() ? "yes" : "no") << "\n"
            << "Frames rendered: " << rendered_frames_.load() << "\n"
            << "Last processing time: " << processing_us_.load() / 1000.0 << " ms\n"
            << "Frames published: " << published_frames_.load() << "\n"
@@ -561,6 +629,14 @@ class StudioWindow final : public QMainWindow {
     last_frame_width_ = frame->width;
     last_frame_height_ = frame->height;
     if (mirror_enabled_) mirror_horizontal(*frame);
+    if (image_visible_) {
+      std::shared_ptr<Frame> image;
+      {
+        std::scoped_lock lock(image_mutex_);
+        image = loaded_image_;
+      }
+      if (image) cover_frame(*image, *frame);
+    }
     if (message_visible_) {
       std::wstring message;
       {
@@ -605,6 +681,30 @@ class StudioWindow final : public QMainWindow {
                      QString::fromStdWString(message));
   }
 
+  static void cover_frame(const Frame& source, Frame& destination) {
+    if (source.width <= 0 || source.height <= 0) return;
+    const double target_aspect = static_cast<double>(destination.width) / destination.height;
+    const double source_aspect = static_cast<double>(source.width) / source.height;
+    int crop_width = source.width;
+    int crop_height = source.height;
+    if (source_aspect > target_aspect) {
+      crop_width = std::max(1, static_cast<int>(source.height * target_aspect));
+    } else {
+      crop_height = std::max(1, static_cast<int>(source.width / target_aspect));
+    }
+    const int crop_x = (source.width - crop_width) / 2;
+    const int crop_y = (source.height - crop_height) / 2;
+    for (int y = 0; y < destination.height; ++y) {
+      const int source_y = crop_y + std::min(crop_height - 1,
+          static_cast<int>((static_cast<std::int64_t>(y) * crop_height) / destination.height));
+      for (int x = 0; x < destination.width; ++x) {
+        const int source_x = crop_x + std::min(crop_width - 1,
+            static_cast<int>((static_cast<std::int64_t>(x) * crop_width) / destination.width));
+        destination.at(x, y) = source.at(source_x, source_y);
+      }
+    }
+  }
+
   AppSettings settings_;
   SharedFrameWriter frame_writer_;
   std::mutex frame_writer_mutex_;
@@ -613,6 +713,9 @@ class StudioWindow final : public QMainWindow {
   std::mutex message_mutex_;
   std::wstring message_text_;
   std::atomic_bool message_visible_{false};
+  std::mutex image_mutex_;
+  std::shared_ptr<Frame> loaded_image_;
+  std::atomic_bool image_visible_{false};
   std::atomic_bool mirror_enabled_{true};
   std::atomic_bool shutting_down_{false};
   std::atomic_bool output_enabled_{true};
@@ -634,6 +737,9 @@ class StudioWindow final : public QMainWindow {
   QCheckBox* mirror_{};
   QLineEdit* prompt_edit_{};
   QPushButton* message_toggle_{};
+  QPushButton* load_image_button_{};
+  QPushButton* image_toggle_{};
+  QLabel* image_name_{};
   QLabel* metrics_{};
   QLabel* status_{};
   QPushButton* diagnostics_button_{};

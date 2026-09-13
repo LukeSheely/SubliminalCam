@@ -32,4 +32,14 @@ cl.exe /nologo /std:c++20 /EHsc /O2 /DUNICODE /D_UNICODE /DNOMINMAX ^
   /Fe:"%DIAGROOT%\subliminalcam_tests.exe"
 if errorlevel 1 exit /b %errorlevel%
 "%DIAGROOT%\subliminalcam_tests.exe"
+if errorlevel 1 exit /b %errorlevel%
+cl.exe /nologo /std:c++20 /EHsc /O2 /DUNICODE /D_UNICODE /DNOMINMAX ^
+  /I"%~dp0..\src" ^
+  "%~dp0..\tests\image_loader_tests.cpp" ^
+  "%~dp0..\src\app\image_loader.cpp" ^
+  /Fo:"%DIAGROOT%\\" ^
+  /Fe:"%DIAGROOT%\image_loader_tests.exe" ^
+  /link windowscodecs.lib ole32.lib
+if errorlevel 1 exit /b %errorlevel%
+"%DIAGROOT%\image_loader_tests.exe"
 exit /b %errorlevel%

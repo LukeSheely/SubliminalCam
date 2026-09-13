@@ -4,6 +4,7 @@
 
 - Camera picker, reconnect button, mirror option, live preview, and output toggle
 - One editable message with a manual show/hide button
+- One locally loaded full-screen image with a manual show/hide button
 - No background compositor, scheduler, animation, or fade pipeline
 - Persistent local settings and deterministic native tests
 

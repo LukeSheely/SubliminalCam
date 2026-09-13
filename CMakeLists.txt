@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(SubliminalCam VERSION 0.5.1 LANGUAGES CXX)
+project(SubliminalCam VERSION 0.6.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -31,11 +31,12 @@ qt_add_executable(SubliminalCam WIN32
   src/app/main.cpp
   src/app/camera_devices.cpp
   src/app/camera_capture.cpp
+  src/app/image_loader.cpp
 )
 target_link_libraries(SubliminalCam PRIVATE
   subliminalcam_core
   Qt6::Core Qt6::Gui Qt6::Widgets
-  mfplat mf mfreadwrite mfuuid ole32
+  mfplat mf mfreadwrite mfuuid ole32 windowscodecs
 )
 target_compile_definitions(SubliminalCam PRIVATE UNICODE _UNICODE NOMINMAX)
 if(MSVC)
@@ -57,8 +58,14 @@ add_executable(subliminalcam_tests tests/core_tests.cpp)
 target_link_libraries(subliminalcam_tests PRIVATE subliminalcam_core)
 target_compile_definitions(subliminalcam_tests PRIVATE UNICODE _UNICODE NOMINMAX)
 
+add_executable(image_loader_tests tests/image_loader_tests.cpp src/app/image_loader.cpp)
+target_include_directories(image_loader_tests PRIVATE src)
+target_link_libraries(image_loader_tests PRIVATE windowscodecs ole32)
+target_compile_definitions(image_loader_tests PRIVATE UNICODE _UNICODE NOMINMAX)
+
 enable_testing()
 add_test(NAME core COMMAND subliminalcam_tests)
+add_test(NAME image_loader COMMAND image_loader_tests)
 
 set(VCAM_SOURCE_DLL "${CMAKE_SOURCE_DIR}/vendor/windows-camera/VirtualCameraMediaSource/x64/Release/VirtualCameraMediaSource.dll")
 if(EXISTS "${VCAM_SOURCE_DLL}")

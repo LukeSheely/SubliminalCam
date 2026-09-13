@@ -24,7 +24,8 @@ bool save_settings(const AppSettings& settings, const std::filesystem::path& pat
   out << L"version=2\n"
       << L"camera_id=" << settings.camera_id << L"\n"
       << L"mirror=" << (settings.mirror ? 1 : 0) << L"\n"
-      << L"message=" << settings.message << L"\n";
+      << L"message=" << settings.message << L"\n"
+      << L"image_path=" << settings.image_path << L"\n";
   return static_cast<bool>(out);
 }
 
@@ -42,6 +43,7 @@ AppSettings load_settings(const std::filesystem::path& path) {
       if (key == L"camera_id") settings.camera_id = value;
       else if (key == L"mirror") settings.mirror = value == L"1";
       else if (key == L"message" || key == L"prompt") settings.message = value;
+      else if (key == L"image_path") settings.image_path = value;
     } catch (...) {
       // Preserve defaults for malformed values.
     }

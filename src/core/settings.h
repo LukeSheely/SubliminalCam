@@ -8,6 +8,7 @@ namespace subliminalcam {
 struct AppSettings {
   std::wstring camera_id;
   std::wstring message{L"Take a breath"};
+  std::wstring image_path;
   bool mirror{true};
 };
 

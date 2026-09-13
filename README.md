@@ -13,6 +13,8 @@ The focused application is implemented:
 - Simple Qt 6 controller with a large live preview
 - Physical-camera enumeration through Media Foundation
 - One message field and an immediate **Show message / Hide message** toggle
+- Load PNG/JPEG/BMP files and immediately switch the full camera view between
+  the live feed and a centered, cover-cropped image
 - Optional camera mirroring; background effects are intentionally left to video-call software
 - Local settings persistence
 - Native unit tests and CI configuration
