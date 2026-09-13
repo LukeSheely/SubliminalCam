@@ -398,7 +398,13 @@ int wmain(int argc, wchar_t** argv) {
     std::wcerr << L"Operation failed (0x" << std::hex << static_cast<unsigned long>(hr)
                << L"): " << error_message(hr) << L"\n";
     if (HRESULT_CODE(hr) == ERROR_ACCESS_DENIED) {
-      std::wcerr << L"Open Terminal as administrator and retry.\n";
+      if (command == L"install" || command == L"remove") {
+        std::wcerr << L"Open Terminal as administrator and retry.\n";
+      } else if (command == L"probe") {
+        std::wcerr << L"Camera access was denied. Close other camera applications, "
+                      L"confirm Windows camera privacy access for desktop apps, then retry. "
+                      L"Administrator access is not normally required.\n";
+      }
     }
   } else {
     if (command == L"install") std::wcout << L"Virtual camera installed.\n";

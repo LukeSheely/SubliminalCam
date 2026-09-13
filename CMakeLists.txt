@@ -51,7 +51,7 @@ add_executable(SubliminalCamVcamCtl
 )
 target_link_libraries(SubliminalCamVcamCtl PRIVATE
   subliminalcam_core
-  mfplat mfuuid mfsensorgroup ole32 advapi32
+  mfplat mf mfreadwrite mfuuid mfsensorgroup ole32 advapi32
 )
 target_compile_definitions(SubliminalCamVcamCtl PRIVATE UNICODE _UNICODE NOMINMAX)
 
