@@ -141,7 +141,7 @@ class StudioWindow final : public QMainWindow {
     tick_timer_.start();
 
     DiagnosticLog::instance().write(DiagnosticLevel::info, L"Application",
-                                     L"Controller initialized (version 0.5.0-simple)");
+                                     L"Controller initialized (version 0.5.1-simple)");
     capture_ = std::make_unique<CameraCapture>(
         [this](std::shared_ptr<Frame> frame) { process_frame(std::move(frame)); },
         [this](const CaptureStatus& status) {
@@ -449,7 +449,7 @@ class StudioWindow final : public QMainWindow {
     const auto current = GetTickCount64();
     output << "SubliminalCam diagnostic report\n"
            << "Generated: " << QDateTime::currentDateTime().toString(Qt::ISODateWithMs) << "\n"
-           << "App version: 0.5.0-simple\n"
+           << "App version: 0.5.1-simple\n"
            << "Windows: " << QSysInfo::prettyProductName() << " ("
            << QSysInfo::currentCpuArchitecture() << ")\n"
            << "Log: " << QString::fromStdWString(diagnostic_log_path().wstring()) << "\n\n"
@@ -644,13 +644,17 @@ class StudioWindow final : public QMainWindow {
 }  // namespace
 
 int main(int argc, char* argv[]) {
+  // Initialize the GUI thread as STA before Qt creates the Windows platform
+  // integration. Requesting MTA after QApplication exists returns
+  // RPC_E_CHANGED_MODE on systems where Qt has already initialized COM.
+  const HRESULT com_result = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+  if (FAILED(com_result)) return 2;
+
   QApplication app(argc, argv);
   QApplication::setApplicationName("SubliminalCam");
   QApplication::setOrganizationName("SubliminalCam");
   QApplication::setStyle("Fusion");
 
-  const HRESULT com_result = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-  if (FAILED(com_result)) return 2;
   const HRESULT mf_result = MFStartup(MF_VERSION);
   if (FAILED(mf_result)) {
     CoUninitialize();
