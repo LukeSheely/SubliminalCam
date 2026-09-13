@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(SubliminalCam VERSION 0.3.0 LANGUAGES CXX)
+project(SubliminalCam VERSION 0.4.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -19,6 +19,7 @@ qt_standard_project_setup()
 
 add_library(subliminalcam_core STATIC
   src/core/compositor.cpp
+  src/core/diagnostics.cpp
   src/core/prompt_scheduler.cpp
   src/core/settings.cpp
   src/shared/frame_transport.cpp
@@ -43,8 +44,13 @@ if(MSVC)
   target_compile_options(SubliminalCam PRIVATE /utf-8)
 endif()
 
-add_executable(SubliminalCamVcamCtl src/vcamctl/main.cpp)
+add_executable(SubliminalCamVcamCtl
+  src/vcamctl/main.cpp
+  src/app/camera_capture.cpp
+  src/app/camera_devices.cpp
+)
 target_link_libraries(SubliminalCamVcamCtl PRIVATE
+  subliminalcam_core
   mfplat mfuuid mfsensorgroup ole32 advapi32
 )
 target_compile_definitions(SubliminalCamVcamCtl PRIVATE UNICODE _UNICODE NOMINMAX)

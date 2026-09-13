@@ -14,6 +14,9 @@ The first development milestone is implemented:
 - Local settings persistence
 - Native unit tests and CI configuration
 - Explicit start/stop output control with a stable offline slate
+- Live diagnostics with capture-stage HRESULTs, frame/dropout counters, negotiated
+  camera modes, transport health, rotating local logs, and report export
+- Camera hot-plug rescan plus automatic 720p/480p and 30/15 FPS format fallback
 
 The controller publishes its processed frames to a Windows Camera Frame Server media-source DLL. `SubliminalCamVcamCtl.exe` and the installer register that source as a selectable Windows virtual camera.
 
@@ -44,6 +47,16 @@ SubliminalCamVcamCtl.exe install .\VirtualCameraMediaSource.dll
 ```
 
 Remove it with `SubliminalCamVcamCtl.exe remove`.
+
+Generate a read-only diagnostic report even when the controller cannot start:
+
+```powershell
+SubliminalCamVcamCtl.exe diagnose .\SubliminalCam-diagnostics.txt
+SubliminalCamVcamCtl.exe probe
+```
+
+`probe` runs a bounded physical-camera capture test and reports the exact stage,
+negotiated format, frames received, empty stream ticks, and copy failures.
 
 See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for camera flicker, stale DLL, and app-discovery checks.
 

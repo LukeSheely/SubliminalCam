@@ -1,5 +1,24 @@
 # Troubleshooting
 
+## Start with a diagnostic report
+
+Open **Diagnostics** in the controller. The assessment identifies the failing
+boundary and includes the Media Foundation HRESULT, negotiated mode, received
+frames, copy errors, empty stream ticks, last-frame age, processing time, and
+shared-memory publish counts. Reports contain device identifiers but never frame
+contents.
+
+If the controller cannot start, run:
+
+```powershell
+SubliminalCamVcamCtl.exe diagnose .\SubliminalCam-diagnostics.txt
+SubliminalCamVcamCtl.exe probe
+```
+
+The rotating application log is stored at
+`%LOCALAPPDATA%\SubliminalCam\SubliminalCam.log` and is capped at approximately
+2 MB plus one previous log.
+
 ## The virtual camera flickers or briefly shows the offline slate
 
 1. Install the newest build, then completely exit the video-call application.
@@ -21,6 +40,11 @@
 The media source deliberately holds the last complete frame during short
 shared-memory collisions. After output has been unavailable for two seconds, it
 switches once to a static offline slate.
+
+If a camera is connected after the controller starts, press **Refresh** beside
+the camera picker. Capture prioritizes the widely supported native 640×480 at
+30 FPS path, then falls back through 360p, 720p, and 15 FPS modes when a driver
+rejects a format.
 
 ## The image is torn, upside down, or has diagonal corruption
 

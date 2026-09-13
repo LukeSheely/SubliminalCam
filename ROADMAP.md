@@ -13,6 +13,8 @@
 - Move capture and composition off the UI thread (complete)
 - Reuse capture/output buffers, respect camera row stride, and hold the last complete
   virtual-camera frame during shared-memory contention (complete)
+- Add structured capture-stage logging, device capability inspection, automatic
+  format fallback, hot-plug rescan, and exportable health reports (complete)
 - Add PNG/JPEG background decoding through Windows Imaging Component (complete)
 
 ## Milestone 3 — Windows virtual camera (implemented; compatibility verification pending)

@@ -2,17 +2,23 @@
 #include "app/camera_devices.h"
 #include "app/image_loader.h"
 #include "core/compositor.h"
+#include "core/diagnostics.h"
 #include "core/prompt_scheduler.h"
 #include "core/settings.h"
 #include "shared/frame_transport.h"
 
 #include <mfapi.h>
+#include <mferror.h>
 #include <objbase.h>
 
 #include <QApplication>
 #include <QCheckBox>
+#include <QClipboard>
 #include <QComboBox>
+#include <QDateTime>
+#include <QDialog>
 #include <QFileDialog>
+#include <QFile>
 #include <QFontDatabase>
 #include <QFrame>
 #include <QHBoxLayout>
@@ -24,13 +30,17 @@
 #include <QMetaObject>
 #include <QMessageBox>
 #include <QPainter>
+#include <QPlainTextEdit>
 #include <QPointer>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSignalBlocker>
 #include <QSlider>
 #include <QSplitter>
 #include <QStyle>
+#include <QSysInfo>
 #include <QTimer>
+#include <QTextStream>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -144,8 +154,14 @@ class StudioWindow final : public QMainWindow {
     connect(&tick_timer_, &QTimer::timeout, this, [this] { tick(); });
     tick_timer_.start();
 
+    DiagnosticLog::instance().write(DiagnosticLevel::info, L"Application",
+                                     L"Controller UI initialized (version 0.4.0)");
     capture_ = std::make_unique<CameraCapture>(
-        [this](std::shared_ptr<Frame> frame) { process_frame(std::move(frame)); });
+        [this](std::shared_ptr<Frame> frame) { process_frame(std::move(frame)); },
+        [this](const CaptureStatus& status) {
+          QMetaObject::invokeMethod(this, [this, status] { handle_capture_status(status); },
+                                    Qt::QueuedConnection);
+        });
     start_camera();
   }
 
@@ -171,6 +187,12 @@ class StudioWindow final : public QMainWindow {
       QLabel#pausedBadge { background: #292c33; color: #abb1bd; border: 1px solid #454a55;
                            border-radius: 14px; padding: 6px 12px; font-size: 11px;
                            font-weight: 700; letter-spacing: .6px; }
+      QLabel#waitingBadge { background: #463719; color: #ffc85c; border: 1px solid #775d28;
+                            border-radius: 14px; padding: 6px 12px; font-size: 11px;
+                            font-weight: 700; letter-spacing: .6px; }
+      QLabel#errorBadge { background: #482125; color: #ff8a91; border: 1px solid #7b353b;
+                          border-radius: 14px; padding: 6px 12px; font-size: 11px;
+                          font-weight: 700; letter-spacing: .6px; }
       QListWidget, QComboBox, QLineEdit { background: #181a1f; color: #edf0f5;
         border: 1px solid #343841; border-radius: 8px; padding: 7px 9px; selection-background-color: #254f8f; }
       QListWidget { padding: 5px; outline: 0; }
@@ -253,19 +275,14 @@ class StudioWindow final : public QMainWindow {
     output_button_->setChecked(true);
     output_button_->setAccessibleName("Start or stop virtual camera output");
     layout->addWidget(output_button_, 0, Qt::AlignVCenter);
-    live_badge_ = new QLabel("●  OUTPUT LIVE");
-    live_badge_->setObjectName("liveBadge");
-    live_badge_->setAccessibleName("Virtual camera output is live");
+    live_badge_ = new QLabel("◌  OUTPUT STARTING");
+    live_badge_->setObjectName("waitingBadge");
+    live_badge_->setAccessibleName("Virtual camera output is waiting for a physical camera");
     layout->addWidget(live_badge_, 0, Qt::AlignVCenter);
     connect(output_button_, &QPushButton::toggled, this, [this](bool running) {
       output_enabled_ = running;
       output_button_->setText(running ? "Stop output" : "Start output");
-      live_badge_->setText(running ? "●  OUTPUT LIVE" : "○  OUTPUT PAUSED");
-      live_badge_->setObjectName(running ? "liveBadge" : "pausedBadge");
-      live_badge_->style()->unpolish(live_badge_);
-      live_badge_->style()->polish(live_badge_);
-      live_badge_->setAccessibleName(running ? "Virtual camera output is live"
-                                             : "Virtual camera output is paused");
+      update_output_badge();
       if (!running) {
         std::scoped_lock lock(frame_writer_mutex_);
         frame_writer_.invalidate();
@@ -340,7 +357,13 @@ class StudioWindow final : public QMainWindow {
     camera_layout->addWidget(section_label("CAMERA"));
     camera_combo_ = new QComboBox;
     camera_combo_->setAccessibleName("Physical camera");
-    camera_layout->addWidget(camera_combo_);
+    auto* camera_picker = new QHBoxLayout;
+    camera_picker->setContentsMargins(0, 0, 0, 0);
+    camera_picker->addWidget(camera_combo_, 1);
+    refresh_cameras_button_ = new QPushButton("Refresh");
+    refresh_cameras_button_->setToolTip("Rescan cameras after plugging in or reconnecting a device");
+    camera_picker->addWidget(refresh_cameras_button_);
+    camera_layout->addLayout(camera_picker);
     mirror_ = new QCheckBox("Mirror camera");
     camera_layout->addWidget(mirror_);
     layout->addWidget(card(camera_content));
@@ -391,6 +414,8 @@ class StudioWindow final : public QMainWindow {
     connect(camera_combo_, &QComboBox::currentIndexChanged, this, [this](int) {
       if (controls_loaded_) start_camera();
     });
+    connect(refresh_cameras_button_, &QPushButton::clicked, this,
+            [this] { refresh_cameras(); });
     connect(background_combo_, &QComboBox::currentIndexChanged, this, [this](int index) {
       if (!controls_loaded_) return;
       if (index == static_cast<int>(BackgroundMode::image)) choose_background();
@@ -421,6 +446,12 @@ class StudioWindow final : public QMainWindow {
     status_->setObjectName("statusText");
     layout->addWidget(status_);
     layout->addStretch();
+    diagnostics_button_ = new QPushButton("Diagnostics");
+    diagnostics_button_->setAccessibleName("Open local camera diagnostics");
+    diagnostics_button_->setToolTip("View capture stages, counters, errors, and the local log");
+    diagnostics_button_->setFixedHeight(28);
+    layout->addWidget(diagnostics_button_);
+    connect(diagnostics_button_, &QPushButton::clicked, this, [this] { show_diagnostics(); });
     auto* privacy = new QLabel("LOCAL ONLY");
     privacy->setObjectName("sectionLabel");
     layout->addWidget(privacy);
@@ -429,10 +460,26 @@ class StudioWindow final : public QMainWindow {
 
   void load_controls() {
     int selected = 0;
-    cameras_ = enumerate_cameras();
+    auto enumeration = enumerate_cameras_detailed();
+    cameras_ = std::move(enumeration.devices);
+    if (enumeration.excluded_virtual_devices) {
+      DiagnosticLog::instance().write(DiagnosticLevel::info, L"Enumeration",
+          L"Excluded SubliminalCam virtual output from the physical-camera picker");
+    }
+    if (FAILED(enumeration.result)) {
+      DiagnosticLog::instance().write(DiagnosticLevel::error, L"Enumeration",
+          L"MFEnumDeviceSources failed", enumeration.result);
+    }
     for (std::size_t i = 0; i < cameras_.size(); ++i) {
       camera_combo_->addItem(QString::fromStdWString(cameras_[i].name));
+      DiagnosticLog::instance().write(DiagnosticLevel::info, L"Enumeration",
+          L"Found camera: " + cameras_[i].name + L" | " + cameras_[i].symbolic_link);
       if (cameras_[i].symbolic_link == settings_.camera_id) selected = static_cast<int>(i);
+    }
+    if (cameras_.empty()) {
+      DiagnosticLog::instance().write(DiagnosticLevel::error, L"Enumeration",
+                                       L"Media Foundation returned no camera devices",
+                                       MF_E_NOT_FOUND);
     }
     if (!cameras_.empty()) camera_combo_->setCurrentIndex(selected);
     background_combo_->setCurrentIndex(static_cast<int>(settings_.background_mode));
@@ -466,10 +513,212 @@ class StudioWindow final : public QMainWindow {
 
   void start_camera() {
     if (!capture_ || camera_combo_->currentIndex() < 0 ||
-        camera_combo_->currentIndex() >= static_cast<int>(cameras_.size())) return;
+        camera_combo_->currentIndex() >= static_cast<int>(cameras_.size())) {
+      show_status("No physical camera is available", true, true);
+      return;
+    }
     settings_.camera_id = cameras_[static_cast<std::size_t>(camera_combo_->currentIndex())].symbolic_link;
     show_status("Connecting camera…");
     capture_->start(settings_.camera_id);
+  }
+
+  void refresh_cameras() {
+    const auto previous_id = settings_.camera_id;
+    if (capture_) capture_->stop();
+    const QSignalBlocker blocker(camera_combo_);
+    camera_combo_->clear();
+    auto enumeration = enumerate_cameras_detailed();
+    cameras_ = std::move(enumeration.devices);
+    if (enumeration.excluded_virtual_devices) {
+      DiagnosticLog::instance().write(DiagnosticLevel::info, L"Enumeration",
+          L"Rescan excluded SubliminalCam virtual output from physical inputs");
+    }
+    if (FAILED(enumeration.result)) {
+      DiagnosticLog::instance().write(DiagnosticLevel::error, L"Enumeration",
+          L"Camera rescan failed in MFEnumDeviceSources", enumeration.result);
+    }
+    int selected = 0;
+    for (std::size_t i = 0; i < cameras_.size(); ++i) {
+      camera_combo_->addItem(QString::fromStdWString(cameras_[i].name));
+      DiagnosticLog::instance().write(DiagnosticLevel::info, L"Enumeration",
+          L"Rescan found camera: " + cameras_[i].name + L" | " + cameras_[i].symbolic_link);
+      if (cameras_[i].symbolic_link == previous_id) selected = static_cast<int>(i);
+    }
+    if (cameras_.empty()) {
+      DiagnosticLog::instance().write(DiagnosticLevel::error, L"Enumeration",
+                                       L"Camera rescan returned no devices", MF_E_NOT_FOUND);
+      show_status("No camera found. Reconnect it, then press Refresh.", true, true);
+      return;
+    }
+    camera_combo_->setCurrentIndex(selected);
+    show_status(QString("Found %1 camera%2")
+                    .arg(static_cast<int>(cameras_.size())).arg(cameras_.size() == 1 ? "" : "s"));
+    start_camera();
+  }
+
+  void handle_capture_status(const CaptureStatus& status) {
+    last_capture_status_ = status;
+    update_output_badge();
+    if (status.stage == CaptureStage::streaming) {
+      show_status("Physical camera streaming");
+    } else if (status.stage == CaptureStage::failed) {
+      const auto code = QString::fromStdWString(hresult_message(status.result));
+      show_status(QString("Camera failed: %1 · %2")
+                      .arg(QString::fromStdWString(status.detail)).arg(code), true, true);
+    }
+  }
+
+  void update_output_badge() {
+    QString text;
+    QString style;
+    QString accessible;
+    if (!output_enabled_) {
+      text = "○  OUTPUT PAUSED";
+      style = "pausedBadge";
+      accessible = "Virtual camera output is paused";
+    } else if (last_capture_status_.stage == CaptureStage::failed) {
+      text = "!  NO CAMERA FRAME";
+      style = "errorBadge";
+      accessible = "Virtual camera output has no physical camera frame";
+    } else if (last_capture_status_.stage == CaptureStage::streaming) {
+      text = "●  OUTPUT LIVE";
+      style = "liveBadge";
+      accessible = "Virtual camera output is live";
+    } else {
+      text = "◌  OUTPUT WAITING";
+      style = "waitingBadge";
+      accessible = "Virtual camera output is waiting for a physical camera";
+    }
+    live_badge_->setText(text);
+    live_badge_->setObjectName(style);
+    live_badge_->setAccessibleName(accessible);
+    live_badge_->style()->unpolish(live_badge_);
+    live_badge_->style()->polish(live_badge_);
+  }
+
+  QString diagnostic_report() const {
+    QString report;
+    QTextStream output(&report);
+    output << "SubliminalCam diagnostic report\n"
+           << "Generated: " << QDateTime::currentDateTime().toString(Qt::ISODateWithMs) << "\n"
+           << "App version: 0.4.0\n"
+           << "Windows: " << QSysInfo::prettyProductName() << " (" << QSysInfo::currentCpuArchitecture()
+           << ")\n"
+           << "Log: " << QString::fromStdWString(diagnostic_log_path().wstring()) << "\n\n";
+
+    output << "CAMERAS\n"
+           << "Enumerated: " << cameras_.size() << "\n"
+           << "Selected index: " << camera_combo_->currentIndex() << "\n";
+    for (std::size_t i = 0; i < cameras_.size(); ++i) {
+      output << (static_cast<int>(i) == camera_combo_->currentIndex() ? "* " : "  ")
+             << QString::fromStdWString(cameras_[i].name) << "\n  "
+             << QString::fromStdWString(cameras_[i].symbolic_link) << "\n";
+    }
+
+    const auto capture = capture_ ? capture_->snapshot() : CaptureSnapshot{};
+    const auto now = GetTickCount64();
+    output << "\nASSESSMENT\n";
+    if (cameras_.empty()) {
+      output << "FAIL: Media Foundation enumerated no physical cameras.\n";
+    } else if (capture.stage == CaptureStage::failed) {
+      output << "FAIL: Capture stopped in "
+             << QString::fromStdWString(last_capture_status_.detail) << ".\n"
+             << "Result: " << QString::fromStdWString(hresult_message(capture.last_result)) << "\n";
+    } else if (capture.frames_received == 0) {
+      output << "WAITING: The camera was selected but no complete frame has arrived.\n";
+    } else if (capture.last_frame_tick_ms && now - capture.last_frame_tick_ms > 2000) {
+      output << "FAIL: Frame delivery stalled more than two seconds ago.\n";
+    } else if (publish_failures_.load() != 0) {
+      output << "WARN: Frames arrived, but one or more shared-memory publishes failed.\n";
+    } else if (processing_us_.load() > 33333) {
+      output << "WARN: Processing exceeds the 33.3 ms budget for 30 FPS; expect stutter.\n";
+    } else if (capture.frames_received != 0 && published_frames_.load() != 0) {
+      output << "PASS: Physical capture and shared-frame publishing are active.\n";
+    } else {
+      output << "INFO: Capture is active; virtual output is currently paused or still starting.\n";
+    }
+    output << "\nCAPTURE\n"
+           << "Stage: " << QString::fromWCharArray(capture_stage_name(capture.stage)) << "\n"
+           << "Last result: " << QString::fromStdWString(hresult_message(capture.last_result)) << "\n"
+           << "Frames received: " << capture.frames_received << "\n"
+           << "Copy failures: " << capture.copy_failures << "\n"
+           << "Stream ticks without a sample: " << capture.stream_ticks << "\n"
+           << "Media-type changes: " << capture.media_type_changes << "\n"
+           << "Negotiated format: " << capture.width << "x" << capture.height
+           << " @ " << capture.frame_rate << " FPS\n"
+           << "Last frame age: ";
+    if (capture.last_frame_tick_ms == 0) output << "never";
+    else output << (now - capture.last_frame_tick_ms) << " ms";
+    output << "\n";
+    if (!last_capture_status_.detail.empty()) {
+      output << "Last detail: " << QString::fromStdWString(last_capture_status_.detail) << "\n";
+    }
+
+    output << "\nPIPELINE\n"
+           << "Output enabled: " << (output_enabled_.load() ? "yes" : "no") << "\n"
+           << "Frames rendered: " << rendered_frames_.load() << "\n"
+           << "Last processing time: " << processing_us_.load() / 1000.0 << " ms\n"
+           << "Frames published: " << published_frames_.load() << "\n"
+           << "Publish failures: " << publish_failures_.load() << "\n";
+
+    output << "\nRECENT LOG\n";
+    for (const auto& line : DiagnosticLog::instance().recent()) {
+      output << QString::fromStdWString(line) << "\n";
+    }
+    return report;
+  }
+
+  void show_diagnostics() {
+    QDialog dialog(this);
+    dialog.setWindowTitle("SubliminalCam Diagnostics");
+    dialog.resize(820, 620);
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* explanation = new QLabel(
+        "Live, local-only camera diagnostics. Reports contain device identifiers and errors, but no frames.");
+    explanation->setWordWrap(true);
+    explanation->setObjectName("subtitle");
+    layout->addWidget(explanation);
+    auto* report = new QPlainTextEdit;
+    report->setReadOnly(true);
+    report->setLineWrapMode(QPlainTextEdit::NoWrap);
+    report->setPlainText(diagnostic_report());
+    layout->addWidget(report, 1);
+
+    auto* actions = new QHBoxLayout;
+    auto* refresh = new QPushButton("Refresh");
+    auto* restart = new QPushButton("Restart camera");
+    auto* copy = new QPushButton("Copy report");
+    auto* save = new QPushButton("Save report…");
+    auto* close = new QPushButton("Close");
+    close->setObjectName("primaryButton");
+    actions->addWidget(refresh);
+    actions->addWidget(restart);
+    actions->addStretch();
+    actions->addWidget(copy);
+    actions->addWidget(save);
+    actions->addWidget(close);
+    layout->addLayout(actions);
+
+    connect(refresh, &QPushButton::clicked, &dialog,
+            [this, report] { report->setPlainText(diagnostic_report()); });
+    connect(restart, &QPushButton::clicked, &dialog, [this, report] {
+      start_camera();
+      report->setPlainText(diagnostic_report());
+    });
+    connect(copy, &QPushButton::clicked, &dialog,
+            [report] { QGuiApplication::clipboard()->setText(report->toPlainText()); });
+    connect(save, &QPushButton::clicked, &dialog, [this, report] {
+      const auto path = QFileDialog::getSaveFileName(
+          this, "Save diagnostic report", "SubliminalCam-diagnostics.txt", "Text files (*.txt)");
+      if (path.isEmpty()) return;
+      QFile file(path);
+      if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        file.write(report->toPlainText().toUtf8());
+        file.close();
+      }
+    });
+    connect(close, &QPushButton::clicked, &dialog, &QDialog::accept);
+    dialog.exec();
   }
 
   void choose_background() {
@@ -508,10 +757,10 @@ class StudioWindow final : public QMainWindow {
                 false);
   }
 
-  void show_status(const QString& message, bool error = false) {
+  void show_status(const QString& message, bool error = false, bool persistent = false) {
     status_->setText(message);
     status_->setStyleSheet(error ? "color:#ff737a" : "color:#f0f2f7");
-    status_reset_at_ = now_ms() + 2600;
+    status_reset_at_ = persistent ? 0 : now_ms() + 2600;
   }
 
   void tick() {
@@ -525,8 +774,10 @@ class StudioWindow final : public QMainWindow {
       const auto frames = rendered_frames_.load();
       const auto elapsed = std::max<std::int64_t>(1, current - last_stats_at_);
       const int fps = static_cast<int>((frames - last_stats_frames_) * 1000 / elapsed);
-      metrics_->setText(QString("%1 FPS   ·   1280 × 720   ·   %2 ms")
-                            .arg(fps).arg(processing_us_.load() / 1000));
+      metrics_->setText(QString("%1 FPS   ·   %2 × %3   ·   %4 ms")
+                            .arg(fps).arg(last_frame_width_.load())
+                            .arg(last_frame_height_.load())
+                            .arg(processing_us_.load() / 1000));
       last_stats_frames_ = frames;
       last_stats_at_ = current;
     }
@@ -540,6 +791,8 @@ class StudioWindow final : public QMainWindow {
   void process_frame(std::shared_ptr<Frame> frame) {
     if (!frame) return;
     const auto started = std::chrono::steady_clock::now();
+    last_frame_width_ = frame->width;
+    last_frame_height_ = frame->height;
     if (mirror_enabled_) mirror_horizontal(*frame);
     std::shared_ptr<Frame> custom;
     {
@@ -556,7 +809,15 @@ class StudioWindow final : public QMainWindow {
     draw_prompt(*frame, prompt);
     if (output_enabled_) {
       std::scoped_lock lock(frame_writer_mutex_);
-      frame_writer_.write(*frame, static_cast<std::uint64_t>(now_ms()) * 10000u);
+      if (frame_writer_.write(*frame, static_cast<std::uint64_t>(now_ms()) * 10000u)) {
+        ++published_frames_;
+      } else {
+        const auto failures = ++publish_failures_;
+        if (failures == 1 || failures % 60 == 0) {
+          DiagnosticLog::instance().write(DiagnosticLevel::error, L"Transport",
+                                           L"Failed to publish processed frame");
+        }
+      }
     }
     if (!shutting_down_) preview_->submit(std::move(frame));
     processing_us_ = static_cast<std::uint64_t>(
@@ -587,8 +848,21 @@ class StudioWindow final : public QMainWindow {
         }
         break;
       case BackgroundMode::image:
-        if (custom && custom->width == frame.width && custom->height == frame.height)
-          frame.pixels = custom->pixels;
+        if (custom) {
+          if (custom->width == frame.width && custom->height == frame.height) {
+            frame.pixels = custom->pixels;
+          } else {
+            for (int y = 0; y < frame.height; ++y) {
+              const int source_y = static_cast<int>(
+                  static_cast<std::int64_t>(y) * custom->height / frame.height);
+              for (int x = 0; x < frame.width; ++x) {
+                const int source_x = static_cast<int>(
+                    static_cast<std::int64_t>(x) * custom->width / frame.width);
+                frame.at(x, y) = custom->at(source_x, source_y);
+              }
+            }
+          }
+        }
         break;
       case BackgroundMode::none:
       default:
@@ -641,15 +915,21 @@ class StudioWindow final : public QMainWindow {
   std::atomic_bool output_enabled_{true};
   std::atomic_uint64_t rendered_frames_{0};
   std::atomic_uint64_t processing_us_{0};
+  std::atomic_int last_frame_width_{};
+  std::atomic_int last_frame_height_{};
+  std::atomic_uint64_t published_frames_{0};
+  std::atomic_uint64_t publish_failures_{0};
   std::uint64_t last_stats_frames_{};
   std::int64_t last_stats_at_{now_ms()};
   std::int64_t status_reset_at_{};
   bool controls_loaded_{};
+  CaptureStatus last_capture_status_;
   QTimer tick_timer_;
   PreviewWidget* preview_{};
   QListWidget* scenes_{};
   QListWidget* sources_{};
   QComboBox* camera_combo_{};
+  QPushButton* refresh_cameras_button_{};
   QComboBox* background_combo_{};
   QSlider* blur_slider_{};
   QLabel* blur_caption_{};
@@ -660,6 +940,7 @@ class StudioWindow final : public QMainWindow {
   QPushButton* save_{};
   QLabel* metrics_{};
   QLabel* status_{};
+  QPushButton* diagnostics_button_{};
   QLabel* live_badge_{};
   QPushButton* output_button_{};
 };
